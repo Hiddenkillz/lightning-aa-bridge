@@ -1,0 +1,1 @@
+Put screenshots / clips here. Suggested: pip-over-maps.jpg, split.jpg, energy-page.jpg, call-screen.jpg. Crop out anything with your home address (Maps, nav destinations, the preconditioning destination line on the cluster).
