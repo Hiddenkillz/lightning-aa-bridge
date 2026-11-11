@@ -1,0 +1,11 @@
+[Unit]
+Description=AA bridge HCI capture (btmon, started by aa-bridge when bt_monitor=1)
+After=bluetooth.service
+
+[Service]
+# one file per start; the aa-bridge health recorder syncs the filesystem every 2 s so the capture survives a power pull
+ExecStart=/bin/sh -c 'exec /usr/bin/btmon -w /var/log/aa-bridge-btmon-up$(cut -d. -f1 /proc/uptime)-$(date +%%s).log'
+Restart=always
+RestartSec=2
+StandardOutput=null
+StandardError=journal

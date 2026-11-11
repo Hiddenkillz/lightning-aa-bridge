@@ -1,0 +1,24 @@
+[Unit]
+Description=Android Auto Bridge
+After=local-fs.target
+# Deliberately NOT After=network/bluetooth: the USB gadget toward the truck
+# must come up as early as possible; Sync 4 gives up on a silent device.
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/aa-bridge
+# Radio setup runs after the binary starts, in the background, and can fail freely.
+ExecStartPost=-/bin/sh -c '/usr/local/bin/aa-bridge-setup.sh &'
+ExecStartPost=-/bin/sh -c "/usr/local/bin/aa-bridge-snapshot.sh &"
+ExecStartPost=-/bin/sh -c "/usr/local/bin/aa-bridge-health.sh &"
+ExecStartPost=-/bin/sh -c "/usr/local/bin/aa-bridge-apwatch.sh &"
+Restart=always
+# Process watchdog: the binary pings only while the video pipeline still produces frames (HangWatchdog); a wedged process is killed and restarted.
+WatchdogSec=90
+NotifyAccess=main
+RestartSec=2
+StandardOutput=append:/var/log/aa-bridge.log
+StandardError=append:/var/log/aa-bridge.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" role="img" aria-label="Camera connecting">
+  <defs>
+    <radialGradient id="vignette" cx="50%" cy="50%" r="62%">
+      <stop offset="0" stop-color="#0E131B"/>
+      <stop offset="0.6" stop-color="#070A0E"/>
+      <stop offset="1" stop-color="#000000"/>
+    </radialGradient>
+
+    <linearGradient id="shimmer" x1="0" y1="0" x2="1" y2="0" gradientUnits="objectBoundingBox">
+      <stop offset="0"    stop-color="#9FD0FF" stop-opacity="0"/>
+      <stop offset="0.42" stop-color="#9FD0FF" stop-opacity="0"/>
+      <stop offset="0.5"  stop-color="#C9E4FF" stop-opacity="0.6"/>
+      <stop offset="0.58" stop-color="#9FD0FF" stop-opacity="0"/>
+      <stop offset="1"    stop-color="#9FD0FF" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Geometry, head-on and symmetric about x=960 -->
+    <rect id="headrest" x="820" y="196" width="280" height="170" rx="56"/>
+    <!-- Shell: wide side wings at the top, waist at the hips, flared base -->
+    <path id="shell" d="M 760 290 C 700 290, 664 334, 668 392 L 696 620 C 700 660, 696 690, 690 730 L 672 820 C 664 866, 700 900, 748 900 L 1172 900 C 1220 900, 1256 866, 1248 820 L 1230 730 C 1224 690, 1220 660, 1224 620 L 1252 392 C 1256 334, 1220 290, 1160 290 Z"/>
+    <!-- Inner pad line -->
+    <path id="pad" d="M 776 340 C 740 340, 718 366, 722 404 L 746 622 C 750 664, 746 696, 738 740 L 722 822 C 718 848, 738 864, 762 864 L 1158 864 C 1182 864, 1202 848, 1198 822 L 1182 740 C 1174 696, 1170 664, 1174 622 L 1198 404 C 1202 366, 1180 340, 1144 340 Z"/>
+    <circle id="head" cx="960" cy="440" r="80"/>
+    <!-- Torso: shoulders → hips, one rounded shape -->
+    <path id="torso" d="M 960 536 C 1030 536, 1096 556, 1104 606 L 1092 752 C 1090 776, 1070 790, 1046 790 L 874 790 C 850 790, 830 776, 828 752 L 816 606 C 824 556, 890 536, 960 536 Z"/>
+    <!-- Legs: two stubs out the bottom -->
+    <rect id="legL" x="846" y="760" width="96" height="190" rx="48"/>
+    <rect id="legR" x="978" y="760" width="96" height="190" rx="48"/>
+
+    <mask id="artMask">
+      <rect width="1920" height="1080" fill="#000"/>
+      <g fill="#fff" stroke="#fff" stroke-width="16" stroke-linejoin="round">
+        <use href="#headrest"/>
+        <use href="#shell"/>
+        <use href="#head"/>
+        <use href="#torso"/>
+        <use href="#legL"/>
+        <use href="#legR"/>
+      </g>
+    </mask>
+  </defs>
+
+  <rect width="1920" height="1080" fill="#000"/>
+  <rect width="1920" height="1080" fill="url(#vignette)"/>
+
+  <!-- Breathing halo (slow, subtle) -->
+  <ellipse cx="960" cy="600" rx="400" ry="420" fill="none" stroke="#1E3550" stroke-width="3" opacity="0.3">
+    <animate attributeName="rx" values="390;420;390" dur="3.2s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+    <animate attributeName="ry" values="410;440;410" dur="3.2s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+    <animate attributeName="opacity" values="0.1;0.35;0.1" dur="3.2s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+  </ellipse>
+
+  <!-- Artwork -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <use href="#headrest" fill="#0C1118" stroke="#263241" stroke-width="10"/>
+    <use href="#shell"    fill="#0C1118" stroke="#2C3B4D" stroke-width="10"/>
+    <use href="#pad"      stroke="#1E2A38" stroke-width="8"/>
+    <!-- Child silhouette -->
+    <use href="#legL"  fill="#17222F" stroke="#3A4C62" stroke-width="10"/>
+    <use href="#legR"  fill="#17222F" stroke="#3A4C62" stroke-width="10"/>
+    <use href="#torso" fill="#17222F" stroke="#3A4C62" stroke-width="10"/>
+    <use href="#head"  fill="#17222F" stroke="#3A4C62" stroke-width="10"/>
+    <!-- Five-point harness, drawn dark over the silhouette -->
+    <path d="M 886 548 L 940 650 M 1034 548 L 980 650 M 960 672 L 960 760" stroke="#0B1118" stroke-width="12"/>
+    <rect x="922" y="634" width="76" height="40" rx="12" fill="#0B1118" stroke="#2A4866" stroke-width="5"/>
+    <circle cx="960" cy="772" r="14" fill="#0B1118" stroke="#2A4866" stroke-width="5"/>
+  </g>
+
+  <!-- Shimmer: tilted band, clipped to the artwork, sweeping left → right -->
+  <g mask="url(#artMask)">
+    <rect x="-1200" y="-200" width="1200" height="1480" fill="url(#shimmer)" transform="skewX(-18)">
+      <animateTransform attributeName="transform" type="translate" additive="sum" from="0 0" to="3400 0" dur="2.4s" repeatCount="indefinite" calcMode="spline" keySplines="0.4 0 0.6 1"/>
+    </rect>
+  </g>
+
+  <!-- Faint echo of the same sweep across the background -->
+  <rect x="-1200" y="-200" width="1200" height="1480" fill="url(#shimmer)" opacity="0.1" transform="skewX(-18)">
+    <animateTransform attributeName="transform" type="translate" additive="sum" from="0 0" to="3400 0" dur="2.4s" repeatCount="indefinite" calcMode="spline" keySplines="0.4 0 0.6 1"/>
+  </rect>
+</svg>
