@@ -38,7 +38,7 @@ UiController::UiController(const Config& cfg, std::shared_ptr<Compositor> comp)
     camCropAlign() = cfg_.cam_crop_align;
     { std::ifstream b("/etc/aa-bridge-build"); std::getline(b, build_tag_); while (!build_tag_.empty() && (build_tag_.back() == '\n' || build_tag_.back() == '\r' || build_tag_.back() == ' ')) build_tag_.pop_back(); }
     loadPrefs(cfg_.prefs_path, prefs_);
-    mode_ = prev_mode_ = prefs_.start_last ? prefs_.last_mode : prefs_.start_mode;
+    mode_ = prev_mode_ = allowedMode(prefs_.start_last ? prefs_.last_mode : prefs_.start_mode);
     camera_ = cfg_.camera_test;      // every real camera starts OFFLINE (placeholder) and goes live when its first frame arrives (Compositor watchdog)
     phone_ = cfg_.phone_test;       // real phone presence comes from HeadUnit later
     vw_ = cfg_.video_width; vh_ = cfg_.video_height;
@@ -154,7 +154,7 @@ void UiController::evalSensorsLocked() {
     if (rev != reverse_) {
         reverse_ = rev;
         std::cout << "[Ui] reverse=" << rev << (prefs_.dbg_gear ? " (Debug gear override)" : " (truck)") << std::endl;
-        if (prefs_.auto_cam_reverse) { if (rev) { prev_mode_ = mode_; mode_ = Mode::FullCam; } else mode_ = prev_mode_; }
+        if (prefs_.auto_cam_reverse && cfg_.camera_enable) { if (rev) { prev_mode_ = mode_; mode_ = Mode::FullCam; } else mode_ = prev_mode_; }
     }
     const int truck_drv = truck_driving_ >= 0 ? truck_driving_ : (truck_moving_ ? 26 : 0);     // 26 = no keyboard + no config + short messages (video stays)
 #ifdef AA_BRIDGE_DEBUG_SENSORS
@@ -240,7 +240,7 @@ void UiController::fillEnergyLocked(Model& m) const {
     m.energy_link = !obd_have_ ? "OBD: starting" : !s.port_present ? "OBD adapter: not found" : !s.adapter_ok ? "OBD adapter: " + s.port + " (no answer)"
         : !s.vehicle_awake ? "OBD: vehicle not answering" : "OBD: " + std::to_string(s.replies) + " replies, " + std::to_string(s.errors) + " errors";
 }
-void UiController::setMode(Mode m) { std::lock_guard<std::mutex> l(m_); mode_ = prev_mode_ = m; applyLocked(); }
+void UiController::setMode(Mode m) { std::lock_guard<std::mutex> l(m_); mode_ = prev_mode_ = allowedMode(m); applyLocked(); }
 void UiController::setVisibleWindow(int x, int y, int w, int h) {
     std::lock_guard<std::mutex> l(m_);
     if (w <= 0 || cfg_.calib || cfg_.visible_w > 0) return;            // none advertised (touch-aspect fallback applies) / calibration / explicit config
@@ -292,12 +292,12 @@ Model UiController::modelLocked() const {
           << "   Sent to phone: " << (sent_driving_ < 0 ? 0 : sent_driving_) << (sent_night_ == 1 ? " / night" : " / day");
         m.truck_line1 = a.str(); m.truck_line2 = b.str();
     }
-    m.energy_shown = cfg_.obd_enable; if (m.energy_shown) fillEnergyLocked(m);
+    m.camera_enabled = cfg_.camera_enable; m.energy_shown = cfg_.obd_enable; if (m.energy_shown) fillEnergyLocked(m);
     m.precond_shown = cfg_.precondition_button; m.precond = precond_; m.base_art = comp_->baseArt(); m.pip_corners = cfg_.pip_corners; m.corner_restore = cfg_.pip_corner_restore && comp_->uiBlender(); m.pip_dragging = pipd_ == PipDrag::Dragging || pinch_ != Pinch::None;   // window moving/resizing: no corner covers (they would trail)
     m.mode = mode_; m.prefs = prefs_; m.phone = phone_; m.camera = camera_; m.moving = moving_; m.layout = layout_;
     Prefs full = prefs_; full.roi = Roi(); full.cam_zoom = 1.0; full.cam_fill = false;
     m.cam_view = compute(Mode::FullCam, full, vw_, vh_, cfg_.camera_width, cfg_.camera_height, false, true).camera.rect;
-    m.status = std::string(phone_ ? "Phone connected" : "No phone") + "  |  " + (camera_ ? "Camera OK" : "No camera");
+    m.status = std::string(phone_ ? "Phone connected" : "No phone") + "  |  " + (!cfg_.camera_enable ? "Camera off" : camera_ ? "Camera OK" : "No camera");
     m.build = build_tag_;
     m.light = prefs_.theme == 2 || (prefs_.theme == 0 && sent_night_ != 1);        // Auto: the appearance follows the night mode the phone is told (vehicle, or the Debug override)
     m.split_drag_enabled = splitDragOn(); m.split_dragging = split_drag_; m.split_edge = split_edge_; m.mode_changed_ms = mode_changed_ms_;
@@ -713,7 +713,7 @@ void UiController::handleUiTouchLocked(const Routed& r) {
 void UiController::applyIntentLocked(const Intent& it) {
     bool save = false;
     switch (it.kind) {
-    case Intent::SetMode: mode_ = prev_mode_ = (Mode)it.i; break;
+    case Intent::SetMode: mode_ = prev_mode_ = allowedMode((Mode)it.i); break;
     case Intent::SetStart: prefs_.start_mode = (Mode)it.i; prefs_.start_settings = false; prefs_.start_last = false; save = true; break;
     case Intent::SetStartLast: prefs_.start_last = true; prefs_.start_settings = false; save = true; break;
     case Intent::SetStartSettings: prefs_.start_settings = true; prefs_.start_last = false; save = true; break;
@@ -823,7 +823,7 @@ void UiController::command(const std::string& line) {
 void UiController::commandLocked(const std::string& line, bool& save, bool& ok) {
     std::istringstream is(line);
     std::string c, a; is >> c >> a;
-    if (c == "mode") { Mode m; if ((ok = parseMode(a, m))) { mode_ = prev_mode_ = m; } }
+    if (c == "mode") { Mode m; if ((ok = parseMode(a, m))) { mode_ = prev_mode_ = allowedMode(m); } }
     else if (c == "start") { if (a == "settings") { prefs_.start_settings = true; save = true; } else { Mode m; if ((ok = parseMode(a, m))) { prefs_.start_mode = m; prefs_.start_settings = false; save = true; } } }
     else if (c == "camfill") { prefs_.cam_fill = (a == "1"); save = true; }
     else if (c == "mirror") { prefs_.cam_mirror = (a == "1"); save = true; }

@@ -43,10 +43,10 @@ Everything is off the shelf. Rough US prices as of late 2026.
 | 32 GB+ microSD, decent case with some airflow | runs warm on long drives | $15 |
 | USB-C to USB-C cable, short, data-capable | one cable does both: Sync's USB-C port supplies 5 V / 3 A, which powers the Pi, and carries the Android Auto data. It has to be the USB-C port; the USB-A port can't power a Pi 4 | $8 |
 | 2 × USB Bluetooth 5.x dongles | cheap ones work with some effort; see notes | $10 each |
-| USB camera (UVC) with IR night vision, 90–120° lens | any webcam works; IR for the baby-cam use | $40 |
+| USB camera (UVC) with IR night vision, 90–120° lens | optional. any webcam works; IR for the baby-cam use. No camera: set `camera_enable=0` and the camera, window and split modes disappear (Android Auto, Energy and the rest stay) | $40 |
 | vLinker FS (OBD-II to USB) | optional, for the Energy page | $50 |
 
-The Pi's four USB ports are exactly full: two radios, camera, OBD adapter.
+The Pi's four USB ports are exactly full: two radios, camera, OBD adapter (three without the camera).
 
 ## About the code
 

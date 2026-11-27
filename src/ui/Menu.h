@@ -44,6 +44,7 @@ enum class Screen { Hidden, Home, Settings, Debug, ZoneEdit };   // Home = the p
 struct Model {
     Mode mode = Mode::FullCam;
     Prefs prefs;
+    bool camera_enabled = true;           // config camera_enable: false hides every camera-related control
     bool phone = false, camera = false;   // a LIVE video source feeds the phone / camera pane
     Layout layout;                        // pane rectangles in window coordinates (panes without a live source are placeholders)
     bool moving = false;                  // informational only (no lock): vehicle speed state

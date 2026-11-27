@@ -251,6 +251,19 @@ int main(int argc, char** argv) {
       auto hit = r.route(W - 20, H / 2, Action::Down); CHECK(hit.target == Target::Phone); r.route(W - 20, H / 2, Action::Up);
       hit = r.route(300, 300, Action::Down); CHECK(hit.target == Target::Phone); r.route(300, 300, Action::Up); }
 
+    // ---- camera_enable=0: the pill has Android Auto, Energy (when shown) and Settings only; Settings has no camera rows ----
+    {
+        Menu nm(W, H); Canvas nc(W, H);
+        Model nocam = mk(Mode::FullAA, true, false); nocam.camera_enabled = false; nocam.energy_shown = true;
+        nm.noteActivity(t);
+        nm.render(nc, nocam, t);
+        CHECK(nm.pillOpen(nocam) && findBtn(nm, ID_MODE_AA) && findBtn(nm, ID_MODE_ENERGY) && findBtn(nm, ID_SETTINGS));
+        CHECK(!findBtn(nm, ID_MODE_CAM) && !findBtn(nm, ID_MODE_PIP) && !findBtn(nm, ID_MODE_SPLIT) && nm.buttons().size() == 3);
+        nm.activate(ID_SETTINGS, nocam); nm.render(nc, nocam, t + 10);
+        CHECK(nm.screen() == Screen::Settings && findBtn(nm, ID_START_AA) && findBtn(nm, ID_START_LAST));
+        CHECK(!findBtn(nm, ID_START_CAM) && !findBtn(nm, ID_START_PIP) && !findBtn(nm, ID_START_SPLIT) && !findBtn(nm, ID_ZONE_EDIT) && !findBtn(nm, ID_SPLIT_50));
+        CHECK(findBtn(nm, ID_THEME_AUTO));
+    }
     std::printf(fails ? "%d FAILED\n" : "ALL PASSED\n", fails);
     return fails != 0;
 }

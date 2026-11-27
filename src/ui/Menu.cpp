@@ -95,9 +95,13 @@ void Menu::build(const Model& m, int64_t now) {
         if (pillOpen(m) && !m.split_dragging) {                           // no strip while the divider is dragged: the overlay must stay tiny
             const bool pc = m.precond_shown, en = m.energy_shown;          // 6-7 buttons instead of 5: the strip height is fixed, so they get a little smaller
             struct B { int id; int ic; Mode md; bool isMode; bool divBefore; };
-            std::vector<B> bs = {{ID_MODE_AA, ICON_AA, Mode::FullAA, true, false}, {ID_MODE_CAM, ICON_CAM, Mode::FullCam, true, false},
-                {ID_MODE_PIP, ICON_PIP, Mode::Pip, true, true}, {ID_MODE_SPLIT, ICON_SPLIT, Mode::Split, true, false}};
-            if (en) bs.push_back({ID_MODE_ENERGY, ICON_ENERGY, Mode::Energy, true, true});
+            std::vector<B> bs = {{ID_MODE_AA, ICON_AA, Mode::FullAA, true, false}};
+            if (m.camera_enabled) {                                        // camera_enable=0: no camera, window or split buttons
+                bs.push_back({ID_MODE_CAM, ICON_CAM, Mode::FullCam, true, false});
+                bs.push_back({ID_MODE_PIP, ICON_PIP, Mode::Pip, true, true});
+                bs.push_back({ID_MODE_SPLIT, ICON_SPLIT, Mode::Split, true, false});
+            }
+            if (en) bs.push_back({ID_MODE_ENERGY, ICON_ENERGY, Mode::Energy, true, m.camera_enabled});
             if (pc) bs.push_back({ID_PRECOND, ICON_PRECOND, Mode::FullAA, false, !en});
             bs.push_back({ID_SETTINGS, ICON_GEAR, Mode::FullAA, false, !pc && !en});
             const int n = (int)bs.size(), bw = S(60), divh = S(12), gp = (pc || en) ? S(5) : S(6);
@@ -168,12 +172,17 @@ void Menu::buildRows(const Model& m, bool settings) {
     if (settings) {
         const bool sl = p.start_last, ss = p.start_settings;
         auto on = [&](Mode md) { return !sl && !ss && p.start_mode == md; };
-        row("Start on", "What the screen shows when the vehicle starts", {{ID_START_AA, "Android", on(Mode::FullAA), true}, {ID_START_CAM, "Camera", on(Mode::FullCam), true},
-            {ID_START_PIP, "Window", on(Mode::Pip), true}, {ID_START_SPLIT, "Split", on(Mode::Split), true}, {ID_START_LAST, "Last", sl, true}});
+        if (m.camera_enabled)
+            row("Start on", "What the screen shows when the vehicle starts", {{ID_START_AA, "Android", on(Mode::FullAA), true}, {ID_START_CAM, "Camera", on(Mode::FullCam), true},
+                {ID_START_PIP, "Window", on(Mode::Pip), true}, {ID_START_SPLIT, "Split", on(Mode::Split), true}, {ID_START_LAST, "Last", sl, true}});
+        else
+            row("Start on", "What the screen shows when the vehicle starts", {{ID_START_AA, "Android", !sl && !ss, true}, {ID_START_LAST, "Last", sl, true}});
+        if (m.camera_enabled) {                                    // camera-only settings
         row("Split: phone share", m.split_drag_enabled ? "How much of the screen the phone gets in Split. Drag the divider for any other size." : "How much of the screen the phone gets in Split",
             {{ID_SPLIT_33, "1/3", std::fabs(p.split_ratio - 0.33) < 0.04, true}, {ID_SPLIT_50, "1/2", std::fabs(p.split_ratio - 0.5) < 0.04, true}, {ID_SPLIT_67, "2/3", std::fabs(p.split_ratio - 0.67) < 0.04, true}});
         row("Camera safe zone", "The part of the picture that always stays visible when the camera is cropped",
             {{ID_ZONE_EDIT, "Edit", false, m.camera}, {ID_ZONE_RESET, "Clear", false, !p.roi.full()}});
+        }
         row("Appearance", "Auto follows the vehicle's day and night mode", {{ID_THEME_AUTO, "Auto", p.theme == 0, true}, {ID_THEME_DARK, "Dark", p.theme == 1, true}, {ID_THEME_LIGHT, "Light", p.theme == 2, true}});
         foot_left_ = m.status; foot_right_ = m.build;
     } else {

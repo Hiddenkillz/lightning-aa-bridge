@@ -37,6 +37,7 @@ struct Config {
     std::string hu_key         = "/etc/aa-bridge/hu_key.pem";
 
     // Camera RTSP
+    bool camera_enable         = true;   // 0 = no camera at all: no camera pipeline branch, no camera/window/split modes or settings in the UI (Android Auto + Energy only)
     std::string camera_rtsp    = "rtsp://192.168.50.2:554/mjpeg/1";
     int camera_overlay_x       = 0;    // pixels from right edge
     int camera_overlay_y       = 0;    // pixels from bottom edge
@@ -309,6 +310,7 @@ struct Config {
             else if (key == "truck_silence_exit") c.truck_silence_exit = (val == "1" || val == "true");
             else if (key == "camera_wait_s") c.camera_wait_s = std::stoi(val);
             else if (key == "camera_test")   c.camera_test = (val == "1" || val == "true");
+            else if (key == "camera_enable") c.camera_enable = (val == "1" || val == "true");
             else if (key == "phone_test")    c.phone_test = (val == "1" || val == "true");
             else if (key == "prefs_path")    c.prefs_path = val;
             else if (key == "usb_two_stage") c.usb_two_stage = (val == "1" || val == "true");
@@ -319,6 +321,9 @@ struct Config {
             else if (key == "md_dhparam")   c.md_dhparam = val;
             else if (key == "md_ca")        c.md_ca = val;
             } catch (const std::exception& e) { std::cerr << "[Config] ignoring '" << key << "=" << val << "': " << e.what() << " (default kept)" << std::endl; }
+        }
+        if (!c.camera_enable) {   // every camera source off: the compositor builds no camera branch
+            c.camera_device.clear(); c.camera_rtsp.clear(); c.camera_udp_port = 0; c.camera_test = false;
         }
         return c;
     }

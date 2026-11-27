@@ -190,7 +190,7 @@ int main(int argc, char** argv) {
     // 4th arg "idleskip": with idle_skip=1 a screen that is not changing is encoded at the idle heartbeat only; the same pipeline with a live camera keeps (much) more.
     if (argc > 4 && std::string(argv[4]) == "idleskip") {
         auto measure = [&](bool camera, bool skip, long* skipped) {
-            Config s; s.phone_test = false; s.camera_test = camera; s.camera_rtsp = ""; s.video_width = 640; s.video_height = 360; s.video_fps = 10; s.video_bitrate = 1000000;
+            Config s; s.phone_test = false; s.camera_test = camera; s.camera_enable = camera; s.camera_rtsp = ""; s.video_width = 640; s.video_height = 360; s.video_fps = 10; s.video_bitrate = 1000000;
             s.camera_width = 320; s.camera_height = 180; s.camera_fps = 10; s.idle_skip = skip; s.idle_fps = 2; s.idle_hold_ms = 400;
             s.prefs_path = "/tmp/aa-prefs-idle.conf"; s.control_fifo = "/tmp/aa-control-idle"; s.status_path = "/tmp/aa-status-idle.json"; std::remove(s.prefs_path.c_str());
             auto comp = std::make_shared<Compositor>(s); ui::UiController ctl(s, comp);
