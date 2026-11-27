@@ -278,7 +278,7 @@ int main(int argc, char** argv) {
     // env BENCH_ENERGY=1 turns on OBD + camera_enable=0 so pip/split carry the Energy panel (1 Hz repaint). Feeds the stream at 30 fps through pushPhoneFrame (like HuSession),
     // runs argv[3] seconds, and prints output fps per 5 s window, process CPU (100% = one core) and peak RSS. Camera is never present.
     if (argc > 5 && std::string(argv[4]) == "bench") {
-        Config s; s.phone_test = false; s.camera_test = false; s.camera_rtsp = ""; s.camera_enable = false; s.video_width = atoi(argv[1]); s.video_height = atoi(argv[2]); s.video_fps = 30; s.video_bitrate = 4000000;
+        Config s; s.phone_test = false; s.camera_test = false; s.camera_rtsp = ""; s.camera_enable = false; s.video_width = atoi(argv[1]); s.video_height = atoi(argv[2]); s.video_fps = 30; s.video_bitrate = getenv("BENCH_BITRATE") ? atoi(getenv("BENCH_BITRATE")) : 4000000;   // env BENCH_BITRATE (bits/s) overrides the encoder bitrate
         const bool energy = getenv("BENCH_ENERGY") && atoi(getenv("BENCH_ENERGY")) != 0; s.obd_enable = energy;
         s.prefs_path = "/tmp/aa-prefs-bench.conf"; s.control_fifo = "/tmp/aa-control-bench"; s.status_path = "/tmp/aa-status-bench.json"; std::remove(s.prefs_path.c_str());
         std::ifstream f(argv[5], std::ios::binary); std::vector<uint8_t> all((std::istreambuf_iterator<char>(f)), {});

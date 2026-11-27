@@ -28,7 +28,8 @@ public:
         compositor_->setOutputCallback([this](const uint8_t* data, size_t size, uint64_t pts) {
             sendVideoFrame(data, size, pts);
         });
-        io_thread_ = std::thread([this]() { runUsbSession(); });
+        io_exited_ = false;
+        io_thread_ = std::thread([this]() { runUsbSession(); io_exited_ = true; });
     }
 
     void stop() {
@@ -36,6 +37,13 @@ public:
         {
             std::lock_guard<std::mutex> lk(session_m_);
             if (session_) session_->stop();
+        }
+        // The session's reader sits in a blocking read() on the bulk-OUT endpoint. With the truck absent or silent nothing ever wakes it, so join() below would
+        // hang until systemd's stop timeout kills the process (seen on the bench: every `systemctl stop` without a truck). The silent-truck watchdog wakes that read by
+        // pulling the gadget off the bus; do the same here, again every half second in case the thread was between two sessions when we first did it.
+        for (int i = 0; i < 100 && io_thread_.joinable() && !io_exited_; ++i) {
+            if (i % 5 == 0) UsbGadget::unbindUdc(config_);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
         if (io_thread_.joinable()) io_thread_.join();
         UsbGadget::teardown(config_);
@@ -255,6 +263,7 @@ private:
     std::shared_ptr<Compositor> compositor_;
     std::shared_ptr<HeadUnit> headunit_;
     std::atomic<bool> running_;
+    std::atomic<bool> io_exited_{true};   // the USB session thread has returned (stop() wakes its blocked read until then)
     std::thread io_thread_;
     Device::TouchCallback touch_cb_;
     Device::TouchFrameCallback touch_frame_cb_;
