@@ -1,0 +1,22 @@
+FROM debian:bookworm
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git ca-certificates pkg-config \
+    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libssl-dev \
+    libprotobuf-dev protobuf-compiler libboost-all-dev libbluetooth-dev libglib2.0-dev libusb-1.0-0-dev \
+    gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
+    python3 libabsl-dev && rm -rf /var/lib/apt/lists/*
+# aasdk: the OpenCarDev fork ships aap_protobuf and installs a CMake package (AASDK::aasdk, AAPProto::aap_protobuf)
+RUN git clone --depth 1 https://github.com/opencardev/aasdk.git /opt/aasdk-src \
+ && cmake -S /opt/aasdk-src -B /opt/aasdk-src/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DSKIP_BUILD_PROTOBUF=ON -DSKIP_BUILD_ABSL=ON -DAASDK_TEST=OFF -DAASDK_BENCHMARK=OFF \
+ && cmake --build /opt/aasdk-src/build -j8 && cmake --install /opt/aasdk-src/build && ldconfig
+WORKDIR /src
+
+# Usage (native on an arm64 host: Apple silicon, Pi, arm64 server; same OS and libraries as Raspberry Pi OS Bookworm):
+#   docker build -t aa-bridge-build:arm64 -f tools/Dockerfile.build tools
+#   docker volume create aa-build
+#   docker run --rm -v "$PWD":/src:ro -v aa-build:/build aa-bridge-build:arm64 bash -c 'cmake -S /src -B /build -DCMAKE_BUILD_TYPE=Release && cmake --build /build -j8'
+# Run a suite:  docker run --rm -v aa-build:/build aa-bridge-build:arm64 bash -c 'cd /build && GST_REGISTRY_FORK=no ./camera-enable-test'
+# Suites that take certificate paths (hu-loopback, *-e2e, tls-order, silence, ...) build but need the Android Auto device certificate to run.
+# "gest" needs a build with -DAA_BRIDGE_DEBUG_SENSORS=ON (its override checks do not exist in a vehicle build).

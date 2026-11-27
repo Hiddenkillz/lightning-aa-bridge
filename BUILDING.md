@@ -5,7 +5,7 @@ Read the first section of `README.md` first: without an Android Auto **device** 
 ## What you need
 - Raspberry Pi 4 running Raspberry Pi OS (Bookworm, 64-bit). Kernel 6.6 is what the author runs.
 - Packages: `cmake g++ pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libssl-dev libprotobuf-dev protobuf-compiler libboost-all-dev libbluetooth-dev libglib2.0-dev`
-- [aasdk](https://github.com/f1xpl/aasdk) built and installed on the Pi (or in your cross sysroot); `CMakeLists.txt` finds it with `find_package(aasdk)`.
+- aasdk built and installed on the Pi (or in your cross sysroot); `CMakeLists.txt` finds it with `find_package(aasdk)`. The source uses the `aap_protobuf` layout, so use the [OpenCarDev fork](https://github.com/opencardev/aasdk) (the original [f1xpl](https://github.com/f1xpl/aasdk) has `aasdk_proto` and will not compile this tree). `tools/Dockerfile.build` is a working recipe on Debian Bookworm.
 - A USB-C cable to the vehicle's Android Auto port (it powers the Pi), a UVC camera, two USB Bluetooth adapters, optionally a vLinker FS for OBD-II.
 
 ## Build
@@ -13,6 +13,7 @@ Read the first section of `README.md` first: without an Android Auto **device** 
 mkdir build && cd build
 cmake .. && make -j4
 ```
+`tools/Dockerfile.build` has the commands to build and run the cert-free suites in a container on any arm64 host (usage in its comments).
 The author cross-builds on an x86 host with a copied Pi sysroot and runs the test suite under `qemu-aarch64-static`; `tools/regress.sh` is that suite. Every test that touches the AA protocol takes certificate paths as arguments, which is why you cannot run the full suite without the certificates.
 
 ## Install on a card
