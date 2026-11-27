@@ -37,6 +37,7 @@ struct Config {
     std::string hu_key         = "/etc/aa-bridge/hu_key.pem";
 
     // Camera RTSP
+    bool camera_enable         = true;   // 0 = no camera at all: no camera pipeline branch and no full-screen camera. With obd_enable=1 the window and split panes show a compact Energy panel instead; without it they are gone too (Android Auto only)
     std::string camera_rtsp    = "rtsp://192.168.50.2:554/mjpeg/1";
     int camera_overlay_x       = 0;    // pixels from right edge
     int camera_overlay_y       = 0;    // pixels from bottom edge
@@ -64,7 +65,7 @@ struct Config {
     // captured from Google Maps first. With 1 the button appears and its on/off state is tracked and logged.
     bool precondition_button   = false;
     bool obd_enable            = false;   // OBD-II poller (vLinker FS on USB serial) + the Energy page in the strip (beta)
-    std::string obd_port;                 // serial device; empty = first /dev/serial/by-id/*
+    std::string obd_port;                 // serial device, or "bt:AA:BB:CC:DD:EE:FF[/channel]" for a paired Bluetooth Classic ELM327; empty = first /dev/serial/by-id/*
     int  obd_baud              = 115200;
     bool obd_log_raw           = false;   // log every request/reply (first drive)
     // Truck-silence watchdog: Sync 4 can stop talking while the USB link stays "configured" (truck 29: engine start, 104 s of silence, never recovered). After this many seconds
@@ -172,6 +173,8 @@ struct Config {
     int log_max_mb             = 20;   // aa-bridge.log is cut (previous half kept as .1) when it exceeds this; 0 = never
     int mix_latency_ms         = 50;   // compositor aggregation wait (lower = less delay, more risk of dropped late frames)
     int video_bitrate          = 4000000;
+    bool hw_encode             = false;  // H.264 encode on the Pi 4's VideoCore (v4l2h264enc) instead of software x264: far less CPU and heat. Needs the GStreamer v4l2 plugin (see BUILDING.md). Env AA_ENCODER=v4l2 also turns it on
+    bool hw_decode             = false;  // decode the phone's H.264 with v4l2h264dec instead of openh264dec (Pi 4 only; the Pi 5 has no H.264 hardware). Env AA_DECODER=v4l2 also turns it on
 
     static Config load(const std::string& path) {
         Config c;
@@ -216,6 +219,8 @@ struct Config {
             else if (key == "enc_queue") c.enc_queue = std::stoi(val);
             else if (key == "mixer_alpha") c.mixer_alpha = std::stoi(val);
             else if (key == "video_bitrate") c.video_bitrate = std::stoi(val);
+            else if (key == "hw_encode")     c.hw_encode = (val == "1" || val == "true");
+            else if (key == "hw_decode")     c.hw_decode = (val == "1" || val == "true");
             else if (key == "camera_width")  c.camera_width = std::stoi(val);
             else if (key == "camera_height") c.camera_height = std::stoi(val);
             else if (key == "camera_codec")  c.camera_codec = val;
@@ -309,6 +314,7 @@ struct Config {
             else if (key == "truck_silence_exit") c.truck_silence_exit = (val == "1" || val == "true");
             else if (key == "camera_wait_s") c.camera_wait_s = std::stoi(val);
             else if (key == "camera_test")   c.camera_test = (val == "1" || val == "true");
+            else if (key == "camera_enable") c.camera_enable = (val == "1" || val == "true");
             else if (key == "phone_test")    c.phone_test = (val == "1" || val == "true");
             else if (key == "prefs_path")    c.prefs_path = val;
             else if (key == "usb_two_stage") c.usb_two_stage = (val == "1" || val == "true");
@@ -319,6 +325,9 @@ struct Config {
             else if (key == "md_dhparam")   c.md_dhparam = val;
             else if (key == "md_ca")        c.md_ca = val;
             } catch (const std::exception& e) { std::cerr << "[Config] ignoring '" << key << "=" << val << "': " << e.what() << " (default kept)" << std::endl; }
+        }
+        if (!c.camera_enable) {   // every camera source off: the compositor builds no camera branch
+            c.camera_device.clear(); c.camera_rtsp.clear(); c.camera_udp_port = 0; c.camera_test = false;
         }
         return c;
     }

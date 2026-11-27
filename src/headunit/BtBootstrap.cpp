@@ -330,6 +330,18 @@ private:
         setProp(ad, "org.bluez.Adapter1", "Discoverable", g_variant_new_boolean(TRUE));
         if (++disc_heals_ <= 20 || disc_heals_ % 100 == 0) LOG("phone adapter " << ad_ << " was NOT discoverable: made discoverable+pairable again (" << disc_heals_ << "x)");
     }
+    // True for a device that offers the serial port profile (SPP, 0x1101) and none of the phone profiles: an OBD-II adapter paired from the Settings page.
+    static bool serialOnly(GVariant* dev) {
+        bool spp = false, phone = false;
+        if (GVariant* u = g_variant_lookup_value(dev, "UUIDs", G_VARIANT_TYPE("as"))) {
+            GVariantIter ui; g_variant_iter_init(&ui, u); const gchar* s;
+            while (g_variant_iter_next(&ui, "&s", &s)) { std::string v = s;
+                if (v.rfind("00001101", 0) == 0) spp = true;
+                if (v.rfind("4de17a00", 0) == 0 || v.rfind("0000111f", 0) == 0 || v.rfind("00001112", 0) == 0 || v.rfind("0000110a", 0) == 0) phone = true; }
+            g_variant_unref(u);
+        }
+        return spp && !phone;
+    }
     void nudgePairedPhones() {
         healDiscoverable();
         if (sessions_ > 0) return;
@@ -343,6 +355,7 @@ private:
             if (GVariant* dev = g_variant_lookup_value(ifaces, "org.bluez.Device1", G_VARIANT_TYPE("a{sv}"))) {
                 gboolean paired = FALSE, connected = FALSE; g_variant_lookup(dev, "Paired", "b", &paired); g_variant_lookup(dev, "Connected", "b", &connected);
                 if (paired && std::string(path).rfind(ad_ + "/", 0) != 0) paired = FALSE;       // devices of the dongle (the vehicle) are not nudged
+                if (paired && serialOnly(dev)) paired = FALSE;                                   // a paired OBD-II adapter (serial profile only) is not a phone: never nudged, bounced or retried
                 if (paired) {
                     gboolean trusted = FALSE; g_variant_lookup(dev, "Trusted", "b", &trusted);
                     if (!trusted && !trust_set_.count(path)) {      // an untrusted phone needs an authorization for each incoming link and BlueZ may refuse it: trust it so it reconnects by itself

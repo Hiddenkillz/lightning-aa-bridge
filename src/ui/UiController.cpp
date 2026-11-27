@@ -38,7 +38,7 @@ UiController::UiController(const Config& cfg, std::shared_ptr<Compositor> comp)
     camCropAlign() = cfg_.cam_crop_align;
     { std::ifstream b("/etc/aa-bridge-build"); std::getline(b, build_tag_); while (!build_tag_.empty() && (build_tag_.back() == '\n' || build_tag_.back() == '\r' || build_tag_.back() == ' ')) build_tag_.pop_back(); }
     loadPrefs(cfg_.prefs_path, prefs_);
-    mode_ = prev_mode_ = prefs_.start_last ? prefs_.last_mode : prefs_.start_mode;
+    mode_ = prev_mode_ = allowedMode(prefs_.start_last ? prefs_.last_mode : prefs_.start_mode);
     camera_ = cfg_.camera_test;      // every real camera starts OFFLINE (placeholder) and goes live when its first frame arrives (Compositor watchdog)
     phone_ = cfg_.phone_test;       // real phone presence comes from HeadUnit later
     vw_ = cfg_.video_width; vh_ = cfg_.video_height;
@@ -154,7 +154,7 @@ void UiController::evalSensorsLocked() {
     if (rev != reverse_) {
         reverse_ = rev;
         std::cout << "[Ui] reverse=" << rev << (prefs_.dbg_gear ? " (Debug gear override)" : " (truck)") << std::endl;
-        if (prefs_.auto_cam_reverse) { if (rev) { prev_mode_ = mode_; mode_ = Mode::FullCam; } else mode_ = prev_mode_; }
+        if (prefs_.auto_cam_reverse && cfg_.camera_enable) { if (rev) { prev_mode_ = mode_; mode_ = Mode::FullCam; } else mode_ = prev_mode_; }
     }
     const int truck_drv = truck_driving_ >= 0 ? truck_driving_ : (truck_moving_ ? 26 : 0);     // 26 = no keyboard + no config + short messages (video stays)
 #ifdef AA_BRIDGE_DEBUG_SENSORS
@@ -240,7 +240,7 @@ void UiController::fillEnergyLocked(Model& m) const {
     m.energy_link = !obd_have_ ? "OBD: starting" : !s.port_present ? "OBD adapter: not found" : !s.adapter_ok ? "OBD adapter: " + s.port + " (no answer)"
         : !s.vehicle_awake ? "OBD: vehicle not answering" : "OBD: " + std::to_string(s.replies) + " replies, " + std::to_string(s.errors) + " errors";
 }
-void UiController::setMode(Mode m) { std::lock_guard<std::mutex> l(m_); mode_ = prev_mode_ = m; applyLocked(); }
+void UiController::setMode(Mode m) { std::lock_guard<std::mutex> l(m_); mode_ = prev_mode_ = allowedMode(m); applyLocked(); }
 void UiController::setVisibleWindow(int x, int y, int w, int h) {
     std::lock_guard<std::mutex> l(m_);
     if (w <= 0 || cfg_.calib || cfg_.visible_w > 0) return;            // none advertised (touch-aspect fallback applies) / calibration / explicit config
@@ -292,15 +292,22 @@ Model UiController::modelLocked() const {
           << "   Sent to phone: " << (sent_driving_ < 0 ? 0 : sent_driving_) << (sent_night_ == 1 ? " / night" : " / day");
         m.truck_line1 = a.str(); m.truck_line2 = b.str();
     }
-    m.energy_shown = cfg_.obd_enable; if (m.energy_shown) fillEnergyLocked(m);
+    m.camera_enabled = cfg_.camera_enable; m.pane_energy = paneEnergy(); m.energy_shown = cfg_.obd_enable; if (m.energy_shown) fillEnergyLocked(m);
     m.precond_shown = cfg_.precondition_button; m.precond = precond_; m.base_art = comp_->baseArt(); m.pip_corners = cfg_.pip_corners; m.corner_restore = cfg_.pip_corner_restore && comp_->uiBlender(); m.pip_dragging = pipd_ == PipDrag::Dragging || pinch_ != Pinch::None;   // window moving/resizing: no corner covers (they would trail)
     m.mode = mode_; m.prefs = prefs_; m.phone = phone_; m.camera = camera_; m.moving = moving_; m.layout = layout_;
     Prefs full = prefs_; full.roi = Roi(); full.cam_zoom = 1.0; full.cam_fill = false;
     m.cam_view = compute(Mode::FullCam, full, vw_, vh_, cfg_.camera_width, cfg_.camera_height, false, true).camera.rect;
-    m.status = std::string(phone_ ? "Phone connected" : "No phone") + "  |  " + (camera_ ? "Camera OK" : "No camera");
+    m.status = std::string(phone_ ? "Phone connected" : "No phone") + "  |  " + (!cfg_.camera_enable ? "Camera off" : camera_ ? "Camera OK" : "No camera");
     m.build = build_tag_;
     m.light = prefs_.theme == 2 || (prefs_.theme == 0 && sent_night_ != 1);        // Auto: the appearance follows the night mode the phone is told (vehicle, or the Debug override)
     m.split_drag_enabled = splitDragOn(); m.split_dragging = split_drag_; m.split_edge = split_edge_; m.mode_changed_ms = mode_changed_ms_;
+    m.obd_current = prefs_.obd_addr; m.obd_fixed = !cfg_.obd_port.empty();
+    if (menu_.screen() == Screen::ObdPair) {
+        if (pairer_) obd_shown_ = pairer_->state(); else obd_shown_ = ObdPairState();
+        m.obd_scanning = obd_shown_.phase == ObdPairState::Scanning; m.obd_pairing = obd_shown_.phase == ObdPairState::Pairing; m.obd_msg = obd_shown_.message;
+        if (!pairer_) m.obd_msg = "Bluetooth is not available";
+        for (const auto& d : obd_shown_.devices) m.obd_devs.push_back({d.name, d.addr, d.rssi, d.obd_like});
+    }
     if (menu_.screen() == Screen::Debug) {                                           // third readout line (only read while the page is up)
         std::ostringstream s; s << "Camera " << cfg_.camera_width << "x" << cfg_.camera_height << "   ";
         std::ifstream t("/sys/class/thermal/thermal_zone0/temp"); long mc = -1; if (t >> mc) s << "CPU " << (mc + 500) / 1000 << " C   ";
@@ -361,9 +368,10 @@ void UiController::applyLayoutOnlyLocked() {
     Mode m = mode_; Prefs p = prefs_; bool ph = phone_ && !(m == Mode::Split && (split_drag_ || split_hold_)), cam = camera_ && !(m == Mode::Split && split_drag_);   // Split drag: both panes are placeholders while the finger is down (the camera is resized ONCE, on release); the phone pane stays a placeholder until the phone has laid out for the final size
     if (split_drag_ && m == Mode::Split) p.split_ratio = std::clamp(split_frac_, 0.25, 0.75);
     if (zone_edit_) { m = Mode::FullCam; p.roi = Roi(); p.cam_zoom = 1.0; p.cam_fill = false; ph = false; cam = true; }   // show the whole camera frame while drawing the zone
+    const int paneW = paneEnergy() ? 640 : cfg_.camera_width, paneH = paneEnergy() ? 360 : cfg_.camera_height;   // the Energy panel is laid out like a 16:9 picture
     const bool want = cfg_.split_reshape && m == Mode::Split && phone_ && ui_config_cb_;      // phone_: its first picture is up (the session is ready for control messages)
-    layout_ = compute(m, p, vw_, vh_, cfg_.camera_width, cfg_.camera_height, ph, cam, !want || reshape_ == Reshape::Accepted ? true : false);
-    if (m == Mode::Split && !want) layout_ = compute(m, p, vw_, vh_, cfg_.camera_width, cfg_.camera_height, ph, cam, true);
+    layout_ = compute(m, p, vw_, vh_, paneW, paneH, ph, cam, !want || reshape_ == Reshape::Accepted ? true : false, paneEnergy());
+    if (m == Mode::Split && !want) layout_ = compute(m, p, vw_, vh_, paneW, paneH, ph, cam, true, paneEnergy());
     // phone re-layout bookkeeping (margins are in the codec frame: window offset + what is left of it)
     const int FW = cfg_.video_width, FH = cfg_.video_height, pane_h = layout_.phone_pane.h;
     const bool frozen = m == Mode::Split && (split_drag_ || split_pending_);          // divider being dragged / settling: no requests to the phone until the commit
@@ -372,7 +380,7 @@ void UiController::applyLayoutOnlyLocked() {
         reshape_ = Reshape::Requested; reshape_h_ = pane_h; reshape_ms_ = nowMs();
         std::cout << "[Ui] split reshape: asking the phone for a " << vw_ << "x" << pane_h << " UI (margins l" << vx_ << " r" << std::max(0, FW - vx_ - vw_) << " t" << vy_ << " b" << std::max(0, FH - vy_ - pane_h) << ")" << std::endl;
         ui_config_cb_(vx_, std::max(0, FW - vx_ - vw_), vy_, std::max(0, FH - vy_ - pane_h));
-        layout_ = compute(m, p, vw_, vh_, cfg_.camera_width, cfg_.camera_height, ph, cam, false);
+        layout_ = compute(m, p, vw_, vh_, paneW, paneH, ph, cam, false, paneEnergy());
     } else if (!want && (reshape_ == Reshape::Requested || reshape_ == Reshape::Accepted)) {
         if (phone_session_ && ui_config_cb_) { std::cout << "[Ui] split reshape: leaving Split, restoring the full window layout" << std::endl; ui_config_cb_(vx_, std::max(0, FW - vx_ - vw_), vy_, std::max(0, FH - vy_ - vh_)); reshape_ = Reshape::Restoring; reshape_ms_ = nowMs(); restore_tries_ = 1; }
         else { reshape_ = Reshape::None; reshape_h_ = 0; }
@@ -604,7 +612,7 @@ bool UiController::pinchLocked(const TouchFrame& f) {
         return true;
     }
     // start (full-screen camera): second finger down while the first one is on the camera picture -> pinch zoom
-    if (raw == 5 && pts.size() >= 2 && (mode_ == Mode::FullCam || mode_ == Mode::Split) && !zone_edit_ && camera_ && menu_.screen() != Screen::Settings && menu_.screen() != Screen::Debug
+    if (raw == 5 && pts.size() >= 2 && (mode_ == Mode::FullCam || mode_ == Mode::Split) && !zone_edit_ && camera_ && menu_.screen() != Screen::Settings && menu_.screen() != Screen::Debug && menu_.screen() != Screen::ObdPair
         && router_.currentTarget() == Target::Camera) {
         double d = dist(pts[0], pts[1]);
         if (d < 12) return false;
@@ -710,10 +718,28 @@ void UiController::handleUiTouchLocked(const Routed& r) {
     }
 }
 
+void UiController::notifyObdAdapterLocked() {
+    if (!obd_cb_) return;
+    obd_cb_(!cfg_.obd_port.empty() ? cfg_.obd_port : prefs_.obd_addr.empty() ? std::string() : "bt:" + prefs_.obd_addr);
+}
+
+// Pairing finished (or any state change): adopt the new adapter and redraw if a page showing it is up.
+bool UiController::obdPairTickLocked() {
+    if (!pairer_) return false;
+    const ObdPairState st = pairer_->state();
+    if (st.serial == obd_serial_) return false;
+    obd_serial_ = st.serial;
+    if (st.phase == ObdPairState::Done && !st.paired_addr.empty() && st.paired_addr != prefs_.obd_addr && cfg_.obd_port.empty()) {
+        prefs_.obd_addr = st.paired_addr; saveLaterLocked(); notifyObdAdapterLocked();
+        std::cout << "[Ui] OBD adapter set to " << prefs_.obd_addr << std::endl;
+    }
+    return menu_.screen() == Screen::ObdPair || menu_.screen() == Screen::Settings;
+}
+
 void UiController::applyIntentLocked(const Intent& it) {
     bool save = false;
     switch (it.kind) {
-    case Intent::SetMode: mode_ = prev_mode_ = (Mode)it.i; break;
+    case Intent::SetMode: mode_ = prev_mode_ = allowedMode((Mode)it.i); break;
     case Intent::SetStart: prefs_.start_mode = (Mode)it.i; prefs_.start_settings = false; prefs_.start_last = false; save = true; break;
     case Intent::SetStartLast: prefs_.start_last = true; prefs_.start_settings = false; save = true; break;
     case Intent::SetStartSettings: prefs_.start_settings = true; prefs_.start_last = false; save = true; break;
@@ -749,6 +775,23 @@ void UiController::applyIntentLocked(const Intent& it) {
     case Intent::SaveRoi: prefs_.roi = it.roi; zone_edit_ = false; save = true; break;
     case Intent::BeginZoneEdit: zone_edit_ = true; break;
     case Intent::EndZoneEdit: zone_edit_ = false; break;
+    case Intent::OpenObdPair: if (pairer_ && cfg_.obd_port.empty()) pairer_->startScan(); break;
+    case Intent::CloseObdPair: if (pairer_) pairer_->stopScan(); break;
+    case Intent::ObdScan: if (pairer_ && cfg_.obd_port.empty()) { if (it.i) pairer_->startScan(); else pairer_->stopScan(); } break;
+    case Intent::ObdPick:
+        if (pairer_ && cfg_.obd_port.empty() && it.i >= 0 && (size_t)it.i < obd_shown_.devices.size()) {
+            const auto& d = obd_shown_.devices[(size_t)it.i];
+            std::cout << "[Ui] OBD adapter: pairing " << d.addr << " (" << d.name << ")" << std::endl;
+            pairer_->pair(d.addr);
+        }
+        break;
+    case Intent::ObdForget:
+        if (cfg_.obd_port.empty() && !prefs_.obd_addr.empty()) {
+            std::cout << "[Ui] OBD adapter: forgetting " << prefs_.obd_addr << std::endl;
+            if (pairer_) pairer_->forget(prefs_.obd_addr);
+            prefs_.obd_addr.clear(); save = true; notifyObdAdapterLocked();
+        }
+        break;
     default: break;
     }
     if (save) saveLaterLocked();
@@ -782,7 +825,7 @@ void UiController::splitDragLocked(int ox, int oy, Action a) {
     // release
     split_drag_ = false;
     if (split_edge_ != 0) {
-        mode_ = prev_mode_ = split_edge_ < 0 ? Mode::FullCam : Mode::FullAA; split_edge_ = 0; split_hold_ = false;
+        mode_ = prev_mode_ = allowedMode(split_edge_ < 0 ? Mode::FullCam : Mode::FullAA); split_edge_ = 0; split_hold_ = false;
         std::cout << "[Ui] split drag end: released in the " << (mode_ == Mode::FullCam ? "top" : "bottom") << " zone -> " << modeName(mode_) << std::endl;
         applyLocked();
         return;
@@ -823,7 +866,7 @@ void UiController::command(const std::string& line) {
 void UiController::commandLocked(const std::string& line, bool& save, bool& ok) {
     std::istringstream is(line);
     std::string c, a; is >> c >> a;
-    if (c == "mode") { Mode m; if ((ok = parseMode(a, m))) { mode_ = prev_mode_ = m; } }
+    if (c == "mode") { Mode m; if ((ok = parseMode(a, m))) { mode_ = prev_mode_ = allowedMode(m); } }
     else if (c == "start") { if (a == "settings") { prefs_.start_settings = true; save = true; } else { Mode m; if ((ok = parseMode(a, m))) { prefs_.start_mode = m; prefs_.start_settings = false; save = true; } } }
     else if (c == "camfill") { prefs_.cam_fill = (a == "1"); save = true; }
     else if (c == "mirror") { prefs_.cam_mirror = (a == "1"); save = true; }
@@ -912,11 +955,12 @@ void UiController::loop() {
         splitCommitLocked(now);
         if (zoom_dirty_ && now - zoom_apply_ms_ >= 60) { zoom_apply_ms_ = now; zoom_dirty_ = false; applyLayoutOnlyLocked(); if (split_drag_) { split_render_ms_ = now; renderOverlayLocked(); } }   // a coalesced divider step must also move the divider
         bool changed = menu_.tick(now);
+        if (obdPairTickLocked()) changed = true;
         if (pipd_dirty_ && pipd_ == PipDrag::Dragging && now - pipd_render_ms_ >= pipd_gap_ms_) {      // trailing refresh after a throttled drag step
             renderOverlayLocked();
             const int64_t end = nowMs(); pipd_gap_ms_ = std::clamp<int64_t>(3 * (end - now), 80, 600); pipd_render_ms_ = end; pipd_dirty_ = false;
         } else if (pipd_ != PipDrag::Dragging) pipd_dirty_ = false;
-        if (mode_ == Mode::Energy && obd_have_ && now - energy_render_ms_ >= 1000) { energy_render_ms_ = now; changed = true; }   // live page: 1 Hz refresh
+        if ((mode_ == Mode::Energy || (paneEnergy() && (mode_ == Mode::Pip || mode_ == Mode::Split) && pipd_ != PipDrag::Dragging && !split_drag_)) && obd_have_ && now - energy_render_ms_ >= 1000) { energy_render_ms_ = now; changed = true; }   // live page: 1 Hz refresh
         if (changed && menu_.screen() == Screen::Hidden && !Menu::fullPage(mode_)) std::cout << "[Ui] pill sleep" << std::endl;
         if (changed) { renderOverlayLocked(); writeStatusLocked(); }
         else if (!comp_->uiBlender() && now - last_overlay_push_ > 1000) { repushOverlayLocked(); last_overlay_push_ = now; }                  // 1 Hz keepalive keeps the live compositor pad fed (no re-render)
@@ -932,7 +976,7 @@ void UiController::writeStatusLocked() {
     const Prefs& p = prefs_;
     f << "{\"mode\":\"" << modeName(mode_) << "\",\"start_mode\":\"" << modeName(p.start_mode) << "\",\"phone\":" << (phone_ ? "true" : "false")
       << ",\"camera\":" << (camera_ ? "true" : "false") << ",\"moving\":" << (moving_ ? "true" : "false")
-      << ",\"menu\":\"" << (menu_.screen() == Screen::Hidden ? "hidden" : menu_.screen() == Screen::Home ? "home" : menu_.screen() == Screen::Settings ? "settings" : menu_.screen() == Screen::Debug ? "debug" : "zone") << "\""
+      << ",\"menu\":\"" << (menu_.screen() == Screen::Hidden ? "hidden" : menu_.screen() == Screen::Home ? "home" : menu_.screen() == Screen::Settings ? "settings" : menu_.screen() == Screen::Debug ? "debug" : menu_.screen() == Screen::ObdPair ? "obd" : "zone") << "\""
       << ",\"touch\":[" << touch_w_ << "," << touch_h_ << "],\"pip_corner\":\"" << cornerName(p.pip_corner) << "\",\"pip_size\":\"" << sizeName(p.pip_size)
       << "\",\"split_ratio\":" << p.split_ratio << ",\"auto_cam_reverse\":" << (p.auto_cam_reverse ? "true" : "false")
       << ",\"roi\":[" << p.roi.x << "," << p.roi.y << "," << p.roi.w << "," << p.roi.h << "]}\n";
@@ -942,6 +986,12 @@ void UiController::writeStatusLocked() {
 
 // A hand-edited, truncated or corrupted prefs file must never put the UI into an undefined state: non-finite numbers are rejected
 // (std::stod accepts "nan"/"inf", and std::clamp passes NaN straight through), numbers are range-limited, anything unparsable is ignored.
+
+static bool validBtAddr(const std::string& a) {   // "AA:BB:CC:DD:EE:FF" only: the value ends up in an RFCOMM address and in log lines
+    if (a.size() != 17) return false;
+    for (size_t i = 0; i < 17; ++i) { if (i % 3 == 2) { if (a[i] != ':') return false; } else if (!isxdigit((unsigned char)a[i])) return false; }
+    return true;
+}
 
 bool UiController::loadPrefs(const std::string& path, Prefs& p) {
     std::ifstream f(path);
@@ -974,6 +1024,7 @@ bool UiController::loadPrefs(const std::string& path, Prefs& p) {
             else if (k == "cam_flip") p.cam_flip = (v == "1");
             else if (k == "cam_zoom") p.cam_zoom = finiteOr(std::stod(v), 1.0, 4.0, p.cam_zoom);
             else if (k == "cam_center") { std::istringstream r(v); double a = 0.5, b = 0.5; if (r >> a >> b) { p.cam_cx = finiteOr(a, 0, 1, 0.5); p.cam_cy = finiteOr(b, 0, 1, 0.5); } }
+            else if (k == "obd_addr") { if (validBtAddr(v)) p.obd_addr = v; }
             else if (k == "roi") { std::istringstream r(v); Prefs t = p; if ((r >> t.roi.x >> t.roi.y >> t.roi.w >> t.roi.h) && std::isfinite(t.roi.x) && std::isfinite(t.roi.y) && std::isfinite(t.roi.w) && std::isfinite(t.roi.h)) { p.roi = t.roi; p.roi.clamp(); } }
         } catch (...) {}
     }
@@ -988,7 +1039,8 @@ bool UiController::savePrefs(const std::string& path, const Prefs& p) {
         << "\npip_px=" << p.pip_px << "\npip_py=" << p.pip_py << "\npip_size=" << sizeName(p.pip_size) << "\npip_frac=" << p.pip_frac << "\nsplit_h=" << p.split_ratio << "\nauto_cam_reverse=" << (p.auto_cam_reverse ? 1 : 0)
         << "\nroi=" << p.roi.x << " " << p.roi.y << " " << p.roi.w << " " << p.roi.h
         << "\ndbg_gear=" << p.dbg_gear << "\ndbg_driving=" << p.dbg_driving << "\ndbg_night=" << p.dbg_night << "\nstart_settings=" << (p.start_settings ? 1 : 0) << "\nstart_last=" << (p.start_last ? 1 : 0) << "\nlast_mode=" << modeName(p.last_mode) << "\ncam_fill=" << (p.cam_fill ? 1 : 0) << "\ncam_mirror=" << (p.cam_mirror ? 1 : 0) << "\ncam_flip=" << (p.cam_flip ? 1 : 0)
-        << "\ncam_zoom=" << p.cam_zoom << "\ncam_center=" << p.cam_cx << " " << p.cam_cy << "\ntheme=" << p.theme << "\nsplit_drag=" << (p.split_drag ? 1 : 0) << "\n"; }
+        << "\ncam_zoom=" << p.cam_zoom << "\ncam_center=" << p.cam_cx << " " << p.cam_cy << "\ntheme=" << p.theme << "\nsplit_drag=" << (p.split_drag ? 1 : 0) << "\n";
+      if (!p.obd_addr.empty()) f << "obd_addr=" << p.obd_addr << "\n"; }
     // Durable replace: the data must be on the card BEFORE the rename, otherwise a power cut right after a settings change can leave a
     // renamed-but-empty prefs file (all settings lost). Then the directory entry is synced too.
     { int fd = ::open(tmp.c_str(), O_RDONLY); if (fd >= 0) { ::fsync(fd); ::close(fd); } }

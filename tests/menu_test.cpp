@@ -171,7 +171,7 @@ int main(int argc, char** argv) {
     for (int id : {ID_START_AA, ID_START_CAM, ID_START_SPLIT, ID_START_PIP, ID_START_LAST, ID_THEME_AUTO, ID_THEME_DARK, ID_THEME_LIGHT}) CHECK(findBtn(m, id));
     CHECK(!findBtn(m, ID_START_SETTINGS));                                                                                            // "start on Settings" is no longer offered
     { const UiButton* a = findBtn(m, ID_START_AA); const UiButton* l = findBtn(m, ID_START_LAST); const UiButton* t3 = findBtn(m, ID_SPLIT_33);
-      CHECK(a && l && a->rect.y == l->rect.y && a->rect.w == l->rect.w && a->rect.x < W / 4 && l->rect.x + l->rect.w > W * 3 / 4);   // five start options: a full-width row of equal segments
+      CHECK(a && l && a->rect.y == l->rect.y && a->rect.h == l->rect.h && a->rect.x > W / 2 && l->rect.x + l->rect.w > W * 3 / 4 && l->rect.x + l->rect.w <= W);   // five start options: one right-aligned row (segments sized to their labels), all on screen
       CHECK(t3 && t3->rect.x > W / 2);                                                                                               // three segments fit beside the label: right column
       it = m.activate(ID_THEME_LIGHT, md); CHECK(it.kind == Intent::SetTheme && it.i == 2);
       md.light = true; m.render(c, md, t); save("settings-light", c, bg); CHECK(c.data()[(((size_t)(H / 2)) * W + W / 2) * 4] > 200);   // light card: bright pixel mid-card
@@ -190,7 +190,11 @@ int main(int argc, char** argv) {
     it = m.activate(ID_DEBUG, md); CHECK(it.kind == Intent::OpenDebug && m.screen() == Screen::Debug);
     md.truck_line1 = "Gear P   Parking brake on   Speed 0 km/h"; md.truck_line2 = "Driving status 0   Night no   Sent to phone: 0 / day"; md.status = "Phone connected  |  Camera OK";
     m.render(c, md, t); save("debug", c, bg); CHECK(findBtn(m, ID_BACK) && findBtn(m, ID_BACK)->rect.x < W / 3);
-    for (int id : {ID_DBG_GEAR_T, ID_DBG_GEAR_P, ID_DBG_GEAR_R, ID_DBG_GEAR_D, ID_DBG_DRV_T, ID_DBG_DRV_PARKED, ID_DBG_DRV_MOVING, ID_DBG_NIGHT_T, ID_DBG_NIGHT_DAY, ID_DBG_NIGHT_NIGHT}) CHECK(findBtn(m, id));
+    for (int id : {ID_DBG_GEAR_T, ID_DBG_GEAR_P, ID_DBG_GEAR_R, ID_DBG_GEAR_D,
+#ifdef AA_BRIDGE_DEBUG_SENSORS
+                   ID_DBG_DRV_T, ID_DBG_DRV_PARKED, ID_DBG_DRV_MOVING,       // the "Driving status" override row exists only in debug-sensor builds (Menu.cpp)
+#endif
+                   ID_DBG_NIGHT_T, ID_DBG_NIGHT_DAY, ID_DBG_NIGHT_NIGHT}) CHECK(findBtn(m, id));
     it = m.activate(ID_DBG_GEAR_R, md); CHECK(it.kind == Intent::SetDbgGear && it.i == 2);
     it = m.activate(ID_DBG_GEAR_T, md); CHECK(it.kind == Intent::SetDbgGear && it.i == 0);
     it = m.activate(ID_DBG_DRV_MOVING, md); CHECK(it.kind == Intent::SetDbgDriving && it.i == 2);
@@ -251,6 +255,44 @@ int main(int argc, char** argv) {
       auto hit = r.route(W - 20, H / 2, Action::Down); CHECK(hit.target == Target::Phone); r.route(W - 20, H / 2, Action::Up);
       hit = r.route(300, 300, Action::Down); CHECK(hit.target == Target::Phone); r.route(300, 300, Action::Up); }
 
+    // ---- camera_enable=0, OBD off: the pill has Android Auto and Settings only; Settings has no camera / window / split rows ----
+    {
+        Menu nm(W, H); Canvas nc(W, H);
+        Model nocam = mk(Mode::FullAA, true, false); nocam.camera_enabled = false;
+        nm.noteActivity(t); nm.render(nc, nocam, t);
+        CHECK(nm.pillOpen(nocam) && findBtn(nm, ID_MODE_AA) && findBtn(nm, ID_SETTINGS) && nm.buttons().size() == 2);
+        CHECK(!findBtn(nm, ID_MODE_CAM) && !findBtn(nm, ID_MODE_PIP) && !findBtn(nm, ID_MODE_SPLIT) && !findBtn(nm, ID_MODE_ENERGY));
+        nm.activate(ID_SETTINGS, nocam); nm.render(nc, nocam, t + 10);
+        CHECK(nm.screen() == Screen::Settings && findBtn(nm, ID_START_AA) && findBtn(nm, ID_START_LAST));
+        CHECK(!findBtn(nm, ID_START_CAM) && !findBtn(nm, ID_START_PIP) && !findBtn(nm, ID_START_SPLIT) && !findBtn(nm, ID_ZONE_EDIT) && !findBtn(nm, ID_SPLIT_50));
+        CHECK(findBtn(nm, ID_THEME_AUTO));
+    }
+    // ---- camera_enable=0, OBD on: window and split show a compact Energy panel instead of the camera ----
+    {
+        Menu nm(W, H); Canvas nc(W, H);
+        auto en = [&](Mode md, bool wake) {
+            Model e = mk(md, true, false); e.camera_enabled = false; e.pane_energy = true; e.energy_shown = true;
+            e.layout = compute(md, Prefs(), W, H, 640, 360, true, false, true, true);
+            e.energy_big_a = "42.5 kW"; e.energy_big_a_label = "Power"; e.energy_big_b = "2.1"; e.energy_big_b_label = "mi/kWh (30 s)";
+            for (int k = 0; k < 8; ++k) e.energy_rows.push_back({"Row " + std::to_string(k), std::to_string(k * 11), "V", 0});
+            if (wake) nm.noteActivity(t);
+            return e; };
+        Model pip = en(Mode::Pip, true);
+        nm.render(nc, pip, t);
+        CHECK(findBtn(nm, ID_MODE_AA) && findBtn(nm, ID_MODE_PIP) && findBtn(nm, ID_MODE_SPLIT) && findBtn(nm, ID_MODE_ENERGY) && findBtn(nm, ID_SETTINGS) && !findBtn(nm, ID_MODE_CAM));
+        { const Rect r = pip.layout.camera.rect; CHECK(!pip.layout.camera.live && pip.layout.camera.visible && r.w > 0);
+          CHECK(alphaAt(nc, r.x + r.w / 2, r.y + r.h / 2) == 255 && alphaAt(nc, r.x + r.w / 2, r.y + 2) == 255);              // an opaque panel where the camera would be
+          const Rect b = nc.contentBounds(); CHECK(b.w > 0);
+          save("energy-pane-pip", nc, bg); }
+        Intent mx = nm.activate(ID_PANE_MAX, pip); CHECK(mx.kind == Intent::SetMode && mx.i == (int)Mode::Energy);          // Max opens the full Energy page
+        Model spl = en(Mode::Split, true);
+        nm.render(nc, spl, t + 100);
+        { const Rect r = spl.layout.camera.rect; CHECK(r.x == 0 && r.w == W && r.y + r.h == H && r.h > H / 3);                   // the panel fills the whole lower pane
+          CHECK(alphaAt(nc, r.x + 4, r.y + r.h - 4) == 255); save("energy-pane-split", nc, bg); }
+        nm.activate(ID_SETTINGS, pip); nm.render(nc, pip, t + 200);
+        CHECK(findBtn(nm, ID_START_AA) && findBtn(nm, ID_START_PIP) && findBtn(nm, ID_START_SPLIT) && findBtn(nm, ID_START_LAST) && findBtn(nm, ID_SPLIT_50));
+        CHECK(!findBtn(nm, ID_START_CAM) && !findBtn(nm, ID_ZONE_EDIT));
+    }
     std::printf(fails ? "%d FAILED\n" : "ALL PASSED\n", fails);
     return fails != 0;
 }

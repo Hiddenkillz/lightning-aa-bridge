@@ -10,6 +10,7 @@
 
 #include "headunit/HeadUnit.h"
 #include "headunit/BtBootstrap.h"
+#include "headunit/BtObdPairer.h"
 #include "btcall/AaCall.h"
 #include "headunit/WifiWatch.h"
 #include "Watchdog.h"
@@ -150,6 +151,8 @@ int main(int argc, char* argv[]) {
     if (config.obd_enable) {                                   // vehicle data over the OBD-II port (own thread, own USB device; Energy page)
         obd::Poller::Options oo; oo.port = config.obd_port; oo.baud = config.obd_baud; oo.log_raw = config.obd_log_raw;
         obdp = std::make_shared<obd::Poller>(oo); obdp->start();
+        uictl->setObdPairer(std::make_shared<BtObdPairer>());                                       // Settings > OBD adapter: scan and pair a Bluetooth ELM327 from the screen
+        uictl->setObdAdapterHandler([obdp](const std::string& port) { obdp->setPort(port); });      // the saved choice now, and whenever it changes
         std::cout << "[aa-bridge] OBD-II poller started (port " << (config.obd_port.empty() ? "auto" : config.obd_port) << ", raw log " << (config.obd_log_raw ? "on" : "off") << ")" << std::endl;
     }
     device->setVehicleCallback([&uictl, obdp](int what, int v) { uictl->setTruckSensor(what, v); if (obdp && what == 5 && v >= 0) obdp->setSpeedMps(v / 1000.0); });

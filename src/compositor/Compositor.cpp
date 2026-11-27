@@ -589,19 +589,26 @@ private:
         // element-by-element construction later if needed.
 
         // Determine codec elements based on what's available
-        // Try V4L2 hardware first (Pi 4), fall back to software
-        // Software by default: v4l2h264enc on Pi 4 hits the bcm2835-codec buffer-size bug
-        // (sizeimage 4096 < 65536) inside GStreamer's pool and produces no frames.
-        // AA_ENCODER=v4l2 re-enables the hardware path for experiments.
-        const char* encenv = getenv("AA_ENCODER");
-        bool hw = hasV4L2Codec() && encenv && std::string(encenv) == "v4l2";
-        std::string h264dec = hw ? "v4l2h264dec" : "openh264dec";
-        std::string h264enc = hw ? "v4l2h264enc"
+        // Software by default. The Pi 4's VideoCore codecs (bcm2835-codec, /dev/video10 decode, /dev/video11 encode) are opt-in per direction:
+        // config hw_encode / hw_decode, or env AA_ENCODER=v4l2 / AA_DECODER=v4l2.
+        // The hardware encoder needs an explicit H.264 level in the caps. Without one GStreamer programs level 1.0 (V4L2 level 0), the firmware cannot
+        // enable the input port for any real picture size and every frame fails ("STREAMON ... No such process", kernel: "Failed enabling i/p port").
+        // That, not buffer sizes, is what stopped this path on current kernels. Level 4 covers 1080p30. repeat_sequence_header puts SPS/PPS on every
+        // key frame so a head unit that joins mid-stream can decode.
+        const char* encenv = getenv("AA_ENCODER"); const char* decenv = getenv("AA_DECODER");
+        const bool v4l2 = hasV4L2Codec();
+        bool hw_enc = v4l2 && (config_.hw_encode || (encenv && std::string(encenv) == "v4l2"));
+        if (hw_enc && !hwEncoderWorks()) { std::cout << "[Compositor] hardware encoder self-test FAILED: falling back to x264enc (software)" << std::endl; hw_enc = false; }
+        const bool hw_dec = v4l2 && (config_.hw_decode || (decenv && std::string(decenv) == "v4l2"));
+        std::string h264dec = hw_dec ? "v4l2h264dec" : "openh264dec";
+        std::string h264enc = hw_enc
+            ? "v4l2h264enc extra-controls=\"controls,video_bitrate=" + std::to_string(std::clamp(config_.video_bitrate, 25000, 25000000)) +
+              ",h264_i_frame_period=" + std::to_string(config_.video_fps) + ",repeat_sequence_header=1\" ! video/x-h264,profile=baseline,level=(string)4"
             : "x264enc tune=zerolatency speed-preset=ultrafast bitrate=" + std::to_string(config_.video_bitrate / 1000) +
               " key-int-max=" + std::to_string(config_.video_fps) + " bframes=0 cabac=false ! video/x-h264,profile=baseline";
         std::cout << "[Compositor] ui overlay: " << (use_blend_ ? "pre-encoder blender (ui_blend=1)" : "compositor layers (ui_blend=0)") << std::endl;
         std::cout << "[Compositor] video path: phone_queue=" << config_.phone_queue << " enc_queue=" << config_.enc_queue << " mixer_alpha=" << config_.mixer_alpha << " mix_latency_ms=" << config_.mix_latency_ms << std::endl;
-        std::cout << "[Compositor] encoder: " << (hw ? "v4l2 (hardware)" : "x264enc (software, baseline)") << std::endl;
+        std::cout << "[Compositor] encoder: " << (hw_enc ? "v4l2h264enc (hardware, level 4)" : "x264enc (software, baseline)") << ", decoder: " << (hw_dec ? "v4l2h264dec (hardware)" : "openh264dec (software)") << std::endl;
 
         // Output caps: H.264 at configured resolution/fps
         std::string out_caps =
@@ -851,6 +858,28 @@ private:
         gst_buffer_unmap(buf, &map);
         gst_sample_unref(sample);
         return GST_FLOW_OK;
+    }
+
+    // Encode a few test frames at the configured size through the hardware encoder before committing to it. A missing plugin, a driver that cannot start the
+    // codec, or a firmware refusal then costs ~0.5 s and a log line instead of a head unit that never gets a picture (the vehicle cannot be reached to fix a config).
+    bool hwEncoderWorks() const {
+        GstElementFactory* f = gst_element_factory_find("v4l2h264enc");
+        if (!f) { std::cout << "[Compositor] v4l2h264enc is not available (GStreamer v4l2 plugin missing?)" << std::endl; return false; }
+        gst_object_unref(f);
+        const std::string d = "videotestsrc num-buffers=8 ! video/x-raw,format=I420,width=" + std::to_string(config_.video_width) + ",height=" + std::to_string(config_.video_height) +
+            ",framerate=" + std::to_string(config_.video_fps) + "/1 ! v4l2h264enc extra-controls=\"controls,video_bitrate=" + std::to_string(std::clamp(config_.video_bitrate, 25000, 25000000)) +
+            "\" ! video/x-h264,profile=baseline,level=(string)4 ! fakesink";
+        GError* e = nullptr; GstElement* p = gst_parse_launch(d.c_str(), &e);
+        if (!p) { std::cout << "[Compositor] hardware encoder self-test: " << (e ? e->message : "parse error") << std::endl; if (e) g_error_free(e); return false; }
+        gst_element_set_state(p, GST_STATE_PLAYING);
+        GstBus* bus = gst_element_get_bus(p);
+        GstMessage* m = gst_bus_timed_pop_filtered(bus, 5 * GST_SECOND, (GstMessageType)(GST_MESSAGE_EOS | GST_MESSAGE_ERROR));
+        const bool ok = m && GST_MESSAGE_TYPE(m) == GST_MESSAGE_EOS;
+        if (m && GST_MESSAGE_TYPE(m) == GST_MESSAGE_ERROR) { GError* er = nullptr; gst_message_parse_error(m, &er, nullptr); std::cout << "[Compositor] hardware encoder self-test error: " << (er ? er->message : "?") << std::endl; if (er) g_error_free(er); }
+        else if (!m) std::cout << "[Compositor] hardware encoder self-test timed out" << std::endl;
+        if (m) gst_message_unref(m);
+        gst_object_unref(bus); gst_element_set_state(p, GST_STATE_NULL); gst_object_unref(p);
+        return ok;
     }
 
     static bool hasV4L2Codec() {

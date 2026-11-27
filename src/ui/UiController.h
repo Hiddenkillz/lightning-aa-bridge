@@ -28,6 +28,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "ObdPairer.h"
 #include <utility>
 #include "../TouchFrame.h"
 #include "../Config.h"
@@ -81,6 +82,15 @@ public:
     void onTouchFrame(const TouchFrame& f);
 
     void setMode(Mode m);
+    // With camera_enable=0 there is no camera. If the OBD poller is on, the window and split panes show a compact Energy panel (paneEnergy) and a request for
+    // the full-screen camera opens the Energy page; without OBD every camera-bearing mode falls back to Android Auto.
+    bool paneEnergy() const { return !cfg_.camera_enable && cfg_.obd_enable; }
+    Mode allowedMode(Mode m) const {
+        if (cfg_.camera_enable) return m;
+        if (m == Mode::FullCam) return paneEnergy() ? Mode::Energy : Mode::FullAA;
+        if (m == Mode::Pip || m == Mode::Split) return paneEnergy() ? m : Mode::FullAA;
+        return m;
+    }
     void command(const std::string& line);
 
     Mode mode() const { std::lock_guard<std::mutex> l(m_); return mode_; }
@@ -106,6 +116,11 @@ public:
     Rect cameraRect() const { std::lock_guard<std::mutex> l(m_); return layout_.camera.rect; }
     Prefs prefs() const { std::lock_guard<std::mutex> l(m_); return prefs_; }
 
+    // On-screen pairing of a Bluetooth OBD-II adapter (Settings > OBD adapter). The pairer does the BlueZ work; the handler receives the poller's port
+    // ("bt:AA:BB:..." or "" for auto) now and whenever the choice changes. Both are optional (without a pairer the Settings row opens an empty page).
+    void setObdPairer(std::shared_ptr<ObdPairer> p) { std::lock_guard<std::mutex> l(m_); pairer_ = std::move(p); }
+    void setObdAdapterHandler(std::function<void(const std::string&)> f) { std::lock_guard<std::mutex> l(m_); obd_cb_ = std::move(f); notifyObdAdapterLocked(); }
+
     static bool loadPrefs(const std::string& path, Prefs& p);
     static bool savePrefs(const std::string& path, const Prefs& p);
 
@@ -123,6 +138,10 @@ private:
     void setVisibleLocked(int x, int y, int w, int h);
     void windowChangedLocked(bool changed);               // tell a live phone the new layout, cache the window   // the part of the output frame the head unit actually shows
     Model modelLocked() const;
+    bool obdPairTickLocked();                                  // pairing progress -> prefs / redraw
+    void notifyObdAdapterLocked();
+    std::shared_ptr<ObdPairer> pairer_; std::function<void(const std::string&)> obd_cb_;
+    unsigned obd_serial_ = 0; mutable ObdPairState obd_shown_;   // obd_shown_: the device list as last drawn (a tap picks from what the user saw)
     void applyIntentLocked(const Intent& it);
     void handleUiTouchLocked(const Routed& r);
     void panLocked(int ox, int oy, int action);

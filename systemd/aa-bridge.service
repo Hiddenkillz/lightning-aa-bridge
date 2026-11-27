@@ -15,6 +15,8 @@ ExecStartPost=-/bin/sh -c "/usr/local/bin/aa-bridge-apwatch.sh &"
 Restart=always
 # Process watchdog: the binary pings only while the video pipeline still produces frames (HangWatchdog); a wedged process is killed and restarted.
 WatchdogSec=90
+# A stop that gets stuck (seen once with the truck connected: SIGTERM ignored for the full default 90 s on `systemctl restart`) must not hold up a restart or an upgrade.
+TimeoutStopSec=15
 NotifyAccess=main
 RestartSec=2
 StandardOutput=append:/var/log/aa-bridge.log

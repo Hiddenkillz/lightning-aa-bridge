@@ -60,6 +60,7 @@ if [ "$SCRIPTS" = 1 ]; then
   inst "$YDIR/aa-bridge.service"     "$MNT/etc/systemd/system/aa-bridge.service" 644
   inst "$YDIR/aa-bridge-btmon.service" "$MNT/etc/systemd/system/aa-bridge-btmon.service" 644
   inst "$YDIR/journald.conf.d/persist.conf" "$MNT/etc/systemd/journald.conf.d/persist.conf" 644
+  inst "$YDIR/bluetooth/aa-bridge-nosap.conf" "$MNT/etc/systemd/system/bluetooth.service.d/aa-bridge-nosap.conf" 644   # frees RFCOMM channel 8 (BlueZ's SAP server holds it) for the AA Wireless profile
   inst "$YDIR/NetworkManager/aa-bridge-unmanaged.conf" "$MNT/etc/NetworkManager/conf.d/aa-bridge-unmanaged.conf" 644
   # NetworkManager's saved state keeps the radio OFF (WirelessEnabled=false) and re-blocks it; the system hostapd/dnsmasq units
   # are enabled on this image, hold port 53 and have no config. Fix the saved state and disable both units.

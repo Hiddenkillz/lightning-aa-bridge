@@ -1,4 +1,4 @@
-// OBD-II (UDS service 0x22) poller for the Ford F-150 Lightning over an ELM327-compatible USB adapter (vLinker FS).
+// OBD-II (UDS service 0x22) poller for the Ford F-150 Lightning over an ELM327-compatible adapter: USB serial (vLinker FS) or Bluetooth Classic RFCOMM (port "bt:<address>").
 // Own thread, own USB device; never touches the Android Auto path. Values are published as a Snapshot with a timestamp per field;
 // a field older than ~3x its poll interval is "stale" and the UI shows a dash, never a frozen number.
 // Request table and formulas: skill reference obd2-lightning-pids.md (pelican.clutch.engineering, confirmed on 2022-2025 trucks).
@@ -112,11 +112,16 @@ public:
     void start();
     void stop();
     Snapshot snapshot() const;
+    void setPort(const std::string& port);   // switch adapter at runtime ("" = auto-discover again): the current link is closed and the new one opened within ~2 s
     void setSpeedMps(double mps);      // from the AA sensor channel (type 5 speed, m/s)
     std::string debugLine() const;     // one line for the Debug page: port, link state, counters
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
+
+// Options::port may name a Bluetooth Classic (RFCOMM/SPP) ELM327 instead of a serial device: "bt:AA:BB:CC:DD:EE:FF" or "bt:AA:BB:CC:DD:EE:FF/3"
+// (RFCOMM channel, default 1). `addr` receives the six bytes in text order. False if the string is not of that form.
+bool parseBluetoothPort(const std::string& port, uint8_t addr[6], int& channel);
 
 // Pure decode helpers (unit-tested without hardware): payload = data bytes AFTER the 0x62 DID DID echo.
 // Returns false when the payload is too short.

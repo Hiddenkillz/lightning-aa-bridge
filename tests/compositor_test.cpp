@@ -24,6 +24,7 @@
 #include <thread>
 #include <vector>
 #include <iterator>
+#include <sstream>
 #include "../src/compositor/Compositor.h"
 #include "../src/ui/UiController.h"
 static void crash(int s) { void* bt[40]; int n = backtrace(bt, 40); dprintf(2, "FATAL signal %d\n", s); backtrace_symbols_fd(bt, n, 2); _exit(128 + s); }
@@ -190,7 +191,7 @@ int main(int argc, char** argv) {
     // 4th arg "idleskip": with idle_skip=1 a screen that is not changing is encoded at the idle heartbeat only; the same pipeline with a live camera keeps (much) more.
     if (argc > 4 && std::string(argv[4]) == "idleskip") {
         auto measure = [&](bool camera, bool skip, long* skipped) {
-            Config s; s.phone_test = false; s.camera_test = camera; s.camera_rtsp = ""; s.video_width = 640; s.video_height = 360; s.video_fps = 10; s.video_bitrate = 1000000;
+            Config s; s.phone_test = false; s.camera_test = camera; s.camera_enable = camera; s.camera_rtsp = ""; s.video_width = 640; s.video_height = 360; s.video_fps = 10; s.video_bitrate = 1000000;
             s.camera_width = 320; s.camera_height = 180; s.camera_fps = 10; s.idle_skip = skip; s.idle_fps = 2; s.idle_hold_ms = 400;
             s.prefs_path = "/tmp/aa-prefs-idle.conf"; s.control_fifo = "/tmp/aa-control-idle"; s.status_path = "/tmp/aa-status-idle.json"; std::remove(s.prefs_path.c_str());
             auto comp = std::make_shared<Compositor>(s); ui::UiController ctl(s, comp);
@@ -273,6 +274,46 @@ int main(int argc, char** argv) {
     // 4th arg "pillcheck": truck-26 scenario end to end. Real Compositor + UI at the truck configuration (1920x1080, synthetic camera, NO phone, AA placeholder
     // showing), a touch, and the ENCODED output is decoded again (offline, after the run: emulated 1080p decoding is slower than real time) so we look at
     // what Sync 4 would show: does the pill appear on touch, and go away later?
+    // 4th arg "bench": sustained-load baseline for a small board. argv[5] = Annex-B H.264 file (AUD-delimited, e.g. 720p30 from x264enc), argv[6] = layout (aa|pip|split|energy),
+    // env BENCH_ENERGY=1 turns on OBD + camera_enable=0 so pip/split carry the Energy panel (1 Hz repaint). Feeds the stream at 30 fps through pushPhoneFrame (like HuSession),
+    // runs argv[3] seconds, and prints output fps per 5 s window, process CPU (100% = one core) and peak RSS. Camera is never present.
+    if (argc > 5 && std::string(argv[4]) == "bench") {
+        Config s; s.phone_test = false; s.camera_test = false; s.camera_rtsp = ""; s.camera_enable = false; s.video_width = atoi(argv[1]); s.video_height = atoi(argv[2]); s.video_fps = 30; s.video_bitrate = getenv("BENCH_BITRATE") ? atoi(getenv("BENCH_BITRATE")) : 4000000;   // env BENCH_BITRATE (bits/s) overrides the encoder bitrate
+        const bool energy = getenv("BENCH_ENERGY") && atoi(getenv("BENCH_ENERGY")) != 0; s.obd_enable = energy;
+        s.prefs_path = "/tmp/aa-prefs-bench.conf"; s.control_fifo = "/tmp/aa-control-bench"; s.status_path = "/tmp/aa-status-bench.json"; std::remove(s.prefs_path.c_str());
+        std::ifstream f(argv[5], std::ios::binary); std::vector<uint8_t> all((std::istreambuf_iterator<char>(f)), {});
+        std::vector<size_t> st; for (size_t i = 0; i + 5 < all.size(); ++i) if (all[i]==0&&all[i+1]==0&&all[i+2]==0&&all[i+3]==1&&(all[i+4]&31)==9) st.push_back(i);
+        if (st.empty()) { std::cout << "[bench] no access units in " << argv[5] << std::endl; return 2; }
+        auto comp = std::make_shared<Compositor>(s); ui::UiController ctl(s, comp);
+        std::atomic<long> out{0}; comp->setOutputCallback([&](const uint8_t*, size_t, uint64_t) { ++out; });
+        comp->start(); ctl.start(); ctl.setTouchGeometry(s.video_width, s.video_height);
+        if (energy) { obd::Snapshot sn; ctl.setEnergy(sn); }
+        ctl.setPhonePresent(true);
+        ctl.command(std::string("mode ") + (argc > 6 ? argv[6] : "aa"));
+        const int secs = atoi(argv[3]); std::atomic<bool> go{true}; std::atomic<long> fed{0};
+        std::thread feeder([&] {
+            const uint64_t base = 987654321000000ull; auto next = std::chrono::steady_clock::now();
+            for (size_t k = 0; go; ++k) {
+                const size_t i = k % st.size(), e = (i + 1 < st.size()) ? st[i + 1] : all.size();
+                comp->pushPhoneFrame(all.data() + st[i], e - st[i], base + k * 33333ull); ++fed;
+                next += std::chrono::milliseconds(33); std::this_thread::sleep_until(next);
+            } });
+        auto cpuSecs = [] { std::ifstream t("/proc/self/stat"); std::string x; std::getline(t, x); const size_t r = x.rfind(')'); std::istringstream is(x.substr(r + 2)); std::string tok; long ut = 0, stt = 0;
+            for (int k = 3; k <= 15 && (is >> tok); ++k) { if (k == 14) ut = std::stol(tok); if (k == 15) stt = std::stol(tok); } return (ut + stt) / (double)sysconf(_SC_CLK_TCK); };
+        auto rssKb = [](const char* key) { std::ifstream t("/proc/self/status"); std::string l; while (std::getline(t, l)) if (l.rfind(key, 0) == 0) return atol(l.c_str() + strlen(key) + 1); return 0L; };
+        std::this_thread::sleep_for(std::chrono::seconds(8));                      // warm-up: pipeline, first IDR, caches
+        std::cout << "[bench] " << argv[5] << ": " << st.size() << " access units, layout " << (argc > 6 ? argv[6] : "aa") << (energy ? " + energy pane" : "") << ", " << s.video_width << "x" << s.video_height << "@30" << std::endl;
+        const double c0 = cpuSecs(); const long o0 = out; const auto t0 = std::chrono::steady_clock::now(); long lastO = o0; double lastC = c0; auto lastT = t0; int bad = 0; double worst = 1e9;
+        while (std::chrono::steady_clock::now() - t0 < std::chrono::seconds(secs)) {
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            const auto now = std::chrono::steady_clock::now(); const double dt = std::chrono::duration<double>(now - lastT).count(), c = cpuSecs(); const long o = out;
+            const double fps = (o - lastO) / dt; worst = std::min(worst, fps); if (fps < 27) ++bad;
+            std::cout << "[bench] window: out " << fps << " fps, cpu " << 100.0 * (c - lastC) / dt << "%, rss " << rssKb("VmRSS:") / 1024 << " MB" << std::endl; lastO = o; lastC = c; lastT = now;
+        }
+        const double dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        std::cout << "[bench] RESULT out " << (out - o0) / dt << " fps avg (worst window " << worst << "), cpu " << 100.0 * (cpuSecs() - c0) / dt << "% avg of 400, peak rss " << rssKb("VmHWM:") / 1024 << " MB, windows under 27 fps: " << bad << std::endl;
+        go = false; feeder.join(); ctl.stop(); comp->stop(); return 0;
+    }
     if (argc > 4 && std::string(argv[4]) == "pillcheck") {
         Config s; s.phone_test = false; s.camera_test = true; s.camera_rtsp = ""; s.video_width = 1920; s.video_height = 1080; s.video_fps = argc > 5 ? std::stoi(argv[5]) : 6; s.video_bitrate = 8000000;
         s.camera_width = 1280; s.camera_height = 720; s.camera_fps = 15; if (const char* v = getenv("AA_MIXER_ALPHA")) s.mixer_alpha = atoi(v); if (const char* v = getenv("AA_UIBLEND")) s.ui_blend = atoi(v);
@@ -719,14 +760,26 @@ int main(int argc, char** argv) {
             ctl.command("dbg gear 3"); wait(300); CHK(ctl.mode() == ui::Mode::FullAA, "gear override Drive returns to the previous layout");
             ctl.command("dbg gear 0"); ctl.command("reverse 1"); wait(300); CHK(ctl.mode() == ui::Mode::FullCam, "truck reverse (gear = Truck) switches to the camera");
             ctl.command("reverse 0"); wait(300); CHK(ctl.mode() == ui::Mode::FullAA, "truck out of reverse returns");
+#ifdef AA_BRIDGE_DEBUG_SENSORS
             ctl.command("dbg driving 2"); wait(200); CHK(sd == 26, "driving override Moving -> phone told 26");
+#else
+            std::cout << "[gest] skip driving overrides (needs a build with -DAA_BRIDGE_DEBUG_SENSORS=ON; the override is compiled out of vehicle builds)" << std::endl;
+#endif
             ctl.command("dbg driving 0"); ctl.command("truck 6 2"); wait(200); CHK(sd == 2, "driving = Truck follows the truck's own status mask");
+#ifdef AA_BRIDGE_DEBUG_SENSORS
             ctl.command("dbg driving 1"); wait(200); CHK(sd == 0, "driving override Parked -> phone told 0");
+#endif
             ctl.command("dbg night 2"); wait(200); CHK(sn == 1, "night override Night -> phone told night");
             ctl.command("dbg night 0"); ctl.command("truck 7 1"); wait(200); CHK(sn == 1, "night = Truck follows the truck");
             ctl.command("truck 7 0"); wait(200); CHK(sn == 0, "truck says day -> phone told day");
             ctl.command("dbg night 1"); wait(200); CHK(sn == 0, "night override Day -> phone told day");
-            { std::ifstream pf(s.prefs_path); std::string all((std::istreambuf_iterator<char>(pf)), {}); CHK(all.find("dbg_driving=1") != std::string::npos && all.find("dbg_night=1") != std::string::npos, "Debug overrides persist in the prefs file"); }
+            { std::ifstream pf(s.prefs_path); std::string all((std::istreambuf_iterator<char>(pf)), {}); 
+#ifdef AA_BRIDGE_DEBUG_SENSORS
+              const bool drv = all.find("dbg_driving=1") != std::string::npos;
+#else
+              const bool drv = true;                      // the driving override is compiled out of vehicle builds; only the night override is exercised
+#endif
+              CHK(drv && all.find("dbg_night=1") != std::string::npos, "Debug overrides persist in the prefs file"); }
         }
         // prefs are written asynchronously (never on the touch path): a change made right before shutdown must still reach the file
         ctl.command("size 0.41"); ctl.stop();
