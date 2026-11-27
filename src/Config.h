@@ -173,6 +173,8 @@ struct Config {
     int log_max_mb             = 20;   // aa-bridge.log is cut (previous half kept as .1) when it exceeds this; 0 = never
     int mix_latency_ms         = 50;   // compositor aggregation wait (lower = less delay, more risk of dropped late frames)
     int video_bitrate          = 4000000;
+    bool hw_encode             = false;  // H.264 encode on the Pi 4's VideoCore (v4l2h264enc) instead of software x264: far less CPU and heat. Needs the GStreamer v4l2 plugin (see BUILDING.md). Env AA_ENCODER=v4l2 also turns it on
+    bool hw_decode             = false;  // decode the phone's H.264 with v4l2h264dec instead of openh264dec (Pi 4 only; the Pi 5 has no H.264 hardware). Env AA_DECODER=v4l2 also turns it on
 
     static Config load(const std::string& path) {
         Config c;
@@ -217,6 +219,8 @@ struct Config {
             else if (key == "enc_queue") c.enc_queue = std::stoi(val);
             else if (key == "mixer_alpha") c.mixer_alpha = std::stoi(val);
             else if (key == "video_bitrate") c.video_bitrate = std::stoi(val);
+            else if (key == "hw_encode")     c.hw_encode = (val == "1" || val == "true");
+            else if (key == "hw_decode")     c.hw_decode = (val == "1" || val == "true");
             else if (key == "camera_width")  c.camera_width = std::stoi(val);
             else if (key == "camera_height") c.camera_height = std::stoi(val);
             else if (key == "camera_codec")  c.camera_codec = val;
