@@ -36,10 +36,12 @@ enum Id : int {
     ID_DBG_RESTART = 130, ID_DBG_REBOOT,
     ID_DBG_SPLITDRAG_OFF = 135, ID_DBG_SPLITDRAG_ON,                   // Debug: experiment toggle for the draggable Split divider                                // restart the bridge service / reboot the Pi (two taps within 3 s)
     ID_THEME_AUTO = 140, ID_THEME_DARK, ID_THEME_LIGHT,                 // Settings: Appearance
+    ID_OBD_OPEN = 160, ID_OBD_SCAN, ID_OBD_FORGET,                      // Settings: OBD adapter page (Bluetooth pairing)
+    ID_OBD_DEV0 = 170,                                                  // ... ID_OBD_DEV0+4: the devices found by the scan
     ID_SPLIT_HANDLE = 150,                                              // Split: the divider band (drag to resize)
 };
 
-enum class Screen { Hidden, Home, Settings, Debug, ZoneEdit };   // Home = the pill, opened (it also stays open on its own in the full-screen camera)
+enum class Screen { Hidden, Home, Settings, Debug, ZoneEdit, ObdPair };   // Home = the pill, opened (it also stays open on its own in the full-screen camera)
 
 struct Model {
     Mode mode = Mode::FullCam;
@@ -61,6 +63,13 @@ struct Model {
     std::string energy_big_a, energy_big_b, energy_big_a_label, energy_big_b_label;   // the two large readouts (kW, mi/kWh)
     std::vector<EnergyRow> energy_rows;   // the rest, in priority order (full page shows all)
     std::string energy_link;              // adapter / link status line
+    // Settings > OBD adapter (Bluetooth pairing); only meaningful with config obd_enable
+    struct ObdDev { std::string name, addr; int rssi = 0; bool obd_like = false; };
+    std::string obd_current;              // paired adapter address from the prefs ("" = none)
+    bool obd_fixed = false;               // config obd_port is set: the page cannot change it
+    bool obd_scanning = false, obd_pairing = false;
+    std::vector<ObdDev> obd_devs;         // devices found by the scan (the page shows the first five)
+    std::string obd_msg;                  // footer line of the OBD page
     std::string status;                   // one-line status (debug page)
     std::string truck_line1, truck_line2; // what the truck reports right now (debug page readout)
     std::string info_line;                // Debug readout, third line (camera format, CPU temperature, phone link)
@@ -74,7 +83,8 @@ struct Model {
 
 struct Intent {
     enum Kind { None, SetMode, SetStart, SetStartSettings, SetStartLast, SetCorner, SetSize, SetSplit, SetAutoCam, ResetRoi, SaveRoi, BeginZoneEdit, EndZoneEdit,
-                SetCamFill, SetCamMirror, SetCamFlip, ResetCamView, OpenDebug, SetDbgGear, SetDbgDriving, SetDbgNight, SetPrecond, SysRestart, SysReboot, SetTheme, SetSplitDrag } kind = None;
+                SetCamFill, SetCamMirror, SetCamFlip, ResetCamView, OpenDebug, SetDbgGear, SetDbgDriving, SetDbgNight, SetPrecond, SysRestart, SysReboot, SetTheme, SetSplitDrag,
+                OpenObdPair, CloseObdPair, ObdScan, ObdPick, ObdForget } kind = None;
     int i = 0;                            // mode / corner / size enum value, or bool
     double d = 0;                         // split ratio
     Roi roi;                              // SaveRoi
@@ -113,6 +123,7 @@ public:
     void openSettings() { screen_ = Screen::Settings; }
     void hide() { screen_ = Screen::Hidden; pressed_ = ID_NONE; }
     void setScreen(Screen s) { screen_ = s; }
+    bool rowsPage() const { return screen_ == Screen::Settings || screen_ == Screen::Debug || screen_ == Screen::ObdPair; }   // the opaque card pages with rows
     bool pillOpen(const Model& m) const { return screen_ == Screen::Home || (screen_ == Screen::Hidden && (fullPage(m.mode) || awakeAt(now_))); }
     void drawEnergyPage(Canvas& c, const Model& m);
     void drawEnergyPane(Canvas& c, const Model& m, const Rect& r, int radius);   // compact Energy panel in a window / split pane

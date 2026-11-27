@@ -152,7 +152,18 @@ struct FakeElm {
     }
 };
 
+static void btPortTests() {
+    uint8_t a[6]; int ch = 0;
+    CHK(obd::parseBluetoothPort("bt:00:1D:A5:68:98:8B", a, ch) && ch == 1 && a[0] == 0x00 && a[1] == 0x1D && a[5] == 0x8B, "bt: address parses, channel defaults to 1");
+    CHK(obd::parseBluetoothPort("bt:aa:bb:cc:dd:ee:ff/3", a, ch) && ch == 3 && a[0] == 0xAA, "bt: lower-case address with /3 channel");
+    CHK(!obd::parseBluetoothPort("bt:00:1D:A5:68:98", a, ch), "bt: short address rejected");
+    CHK(!obd::parseBluetoothPort("bt:00:1D:A5:68:98:8B/0", a, ch) && !obd::parseBluetoothPort("bt:00:1D:A5:68:98:8B/31", a, ch), "bt: channel out of 1..30 rejected");
+    CHK(!obd::parseBluetoothPort("bt:00:1D:A5:68:98:8B/x", a, ch) && !obd::parseBluetoothPort("bt:00:1D:A5:68:98:8Bjunk", a, ch), "bt: trailing junk rejected");
+    CHK(!obd::parseBluetoothPort("/dev/ttyUSB0", a, ch) && !obd::parseBluetoothPort("", a, ch), "serial paths are not bt ports");
+}
+
 int main() {
+    btPortTests();
     decodeTests();
 
     FakeElm fake;

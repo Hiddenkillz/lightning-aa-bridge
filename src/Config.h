@@ -65,7 +65,7 @@ struct Config {
     // captured from Google Maps first. With 1 the button appears and its on/off state is tracked and logged.
     bool precondition_button   = false;
     bool obd_enable            = false;   // OBD-II poller (vLinker FS on USB serial) + the Energy page in the strip (beta)
-    std::string obd_port;                 // serial device; empty = first /dev/serial/by-id/*
+    std::string obd_port;                 // serial device, or "bt:AA:BB:CC:DD:EE:FF[/channel]" for a paired Bluetooth Classic ELM327; empty = first /dev/serial/by-id/*
     int  obd_baud              = 115200;
     bool obd_log_raw           = false;   // log every request/reply (first drive)
     // Truck-silence watchdog: Sync 4 can stop talking while the USB link stays "configured" (truck 29: engine start, 104 s of silence, never recovered). After this many seconds

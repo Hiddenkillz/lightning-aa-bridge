@@ -12,6 +12,7 @@
 #include <iostream>
 #include <poll.h>
 #include <sstream>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
@@ -178,11 +179,35 @@ struct ReqState {
     bool ever_answered = false;
 };
 
+// ---- Bluetooth Classic (RFCOMM) port names ---------------------------------------------------------------------
+bool parseBluetoothPort(const std::string& port, uint8_t addr[6], int& channel) {
+    if (port.size() < 20 || port.compare(0, 3, "bt:") != 0) return false;
+    unsigned b[6]; int n = 0;
+    if (sscanf(port.c_str() + 3, "%2x:%2x:%2x:%2x:%2x:%2x%n", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5], &n) != 6) return false;
+    channel = 1;
+    std::string rest = port.substr(3 + (size_t)n);
+    if (!rest.empty()) {
+        if (rest[0] != '/' || rest.size() > 4) return false;
+        char* end = nullptr; long ch = strtol(rest.c_str() + 1, &end, 10);
+        if (rest.size() < 2 || *end || ch < 1 || ch > 30) return false;
+        channel = (int)ch;
+    }
+    for (int i = 0; i < 6; ++i) addr[i] = (uint8_t)b[i];
+    return true;
+}
+
+#ifndef BTPROTO_RFCOMM
+#define BTPROTO_RFCOMM 3
+#endif
+struct SockaddrRc { sa_family_t family; uint8_t bdaddr[6]; uint8_t channel; };   // the kernel's struct sockaddr_rc (bdaddr is little-endian)
+
 // ---- Elm327 serial transport ------------------------------------------------------------------------------------
 class Elm327 {
 public:
     bool open(const std::string& port, int baud) {
         close();
+        uint8_t ba[6]; int ch = 1;
+        if (parseBluetoothPort(port, ba, ch)) return openRfcomm(port, ba, ch);
         fd_ = ::open(port.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
         if (fd_ < 0) return false;
         termios tio{};
@@ -197,8 +222,27 @@ public:
         port_ = port;
         return true;
     }
+    // Bluetooth Classic SPP: a plain RFCOMM stream socket, so command() reads and writes it like a tty. The adapter must already be paired and
+    // trusted (bluetoothctl); a failed connect (adapter out of range or off with the ignition) just returns false and the poller retries.
+    bool openRfcomm(const std::string& port, const uint8_t ba[6], int ch) {
+        fd_ = ::socket(AF_BLUETOOTH, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, BTPROTO_RFCOMM);
+        if (fd_ < 0) return false;
+        SockaddrRc sa{}; sa.family = AF_BLUETOOTH; sa.channel = (uint8_t)ch;
+        for (int i = 0; i < 6; ++i) sa.bdaddr[i] = ba[5 - i];
+        if (::connect(fd_, reinterpret_cast<sockaddr*>(&sa), sizeof sa) < 0) {
+            if (errno != EINPROGRESS) { close(); return false; }
+            pollfd pfd{fd_, POLLOUT, 0};
+            int pr;
+            do { pr = ::poll(&pfd, 1, 6000); } while (pr < 0 && errno == EINTR);
+            int err = 0; socklen_t el = sizeof err;
+            if (pr <= 0 || ::getsockopt(fd_, SOL_SOCKET, SO_ERROR, &err, &el) != 0 || err != 0) { close(); return false; }
+        }
+        is_socket_ = true;
+        port_ = port;
+        return true;
+    }
     bool isOpen() const { return fd_ >= 0; }
-    void close() { if (fd_ >= 0) { ::close(fd_); fd_ = -1; } }
+    void close() { if (fd_ >= 0) { ::close(fd_); fd_ = -1; } is_socket_ = false; }
 
     // Sends a line (adds '\r'), reads until the '>' prompt (or timeout_ms). Returns the collected reply text
     // (echo, SEARCHING..., \r stripped) in `out`; returns false on a hard I/O error (caller should close+rediscover).
@@ -206,7 +250,7 @@ public:
         out.clear();
         if (log_raw) std::cout << (log_prefix + " > " + cmd + "\n") << std::flush;
         std::string line = cmd + "\r";
-        ssize_t n = ::write(fd_, line.data(), line.size());
+        ssize_t n = is_socket_ ? ::send(fd_, line.data(), line.size(), MSG_NOSIGNAL) : ::write(fd_, line.data(), line.size());
         if (n < 0 && errno != EAGAIN) return false;
         std::string raw;
         auto deadline = clk::now() + std::chrono::milliseconds(timeout_ms);
@@ -247,6 +291,7 @@ private:
         }
     }
     int fd_ = -1;
+    bool is_socket_ = false;
     std::string port_;
 };
 
@@ -259,6 +304,7 @@ struct Poller::Impl {
     Snapshot snap;
     std::atomic<double> speed_mps{0}; std::atomic<int64_t> speed_set_ms{0};
     Elm327 elm;
+    std::mutex port_m; std::atomic<bool> port_changed{false};   // setPort() from another thread
     std::string cur_module;         // currently selected module's 3-hex header, "" = none selected
     std::vector<ReqState> table;
     int64_t last_err_log_ms = 0;
@@ -285,7 +331,7 @@ struct Poller::Impl {
 
     // ---- port discovery ----
     std::string discoverPort() {
-        if (!opt.port.empty()) return opt.port;
+        { std::lock_guard<std::mutex> lk(port_m); if (!opt.port.empty()) return opt.port; }
         const char* dir = "/dev/serial/by-id";
         DIR* d = opendir(dir);
         if (d) {
@@ -375,6 +421,7 @@ struct Poller::Impl {
         for (;;) {
             if (!running) return;
             if (!elm.isOpen()) {
+                port_changed = false;                    // about to open whatever the port is now
                 std::string p = discoverPort();
                 if (p.empty()) { logErrRate("no serial adapter found (checked Options.port, /dev/serial/by-id, ttyUSB0/ttyACM0)"); sleepPoll(2000); continue; }
                 log("opening " + p);
@@ -390,6 +437,12 @@ struct Poller::Impl {
                 last_any_reply_ms = nowMs();
             }
             if (!running) return;
+            if (port_changed.exchange(false)) {
+                log("adapter changed; reconnecting");
+                elm.close();
+                { std::lock_guard<std::mutex> lk(mtx); snap.port_present = false; snap.adapter_ok = false; }
+                continue;
+            }
             if (!pollOnce()) {
                 log("adapter lost (" + port_in_use + "), closing and rediscovering");
                 elm.close();
@@ -570,6 +623,10 @@ Snapshot Poller::snapshot() const {
     Snapshot s = impl_->snap;
     s.now_ms = nowMs();
     return s;
+}
+void Poller::setPort(const std::string& port) {
+    { std::lock_guard<std::mutex> lk(impl_->port_m); if (impl_->opt.port == port) return; impl_->opt.port = port; }
+    impl_->port_changed = true;
 }
 void Poller::setSpeedMps(double mps) { impl_->speed_mps = mps; impl_->speed_set_ms = nowMs(); }
 std::string Poller::debugLine() const {

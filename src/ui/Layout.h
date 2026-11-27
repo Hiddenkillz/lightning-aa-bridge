@@ -55,6 +55,7 @@ struct Prefs {
     bool cam_mirror = false, cam_flip = false;   // horizontal / vertical flip (how the camera is mounted)
     double cam_zoom = 1.0;               // 1..4, pinch in the full-screen camera
     double cam_cx = 0.5, cam_cy = 0.5;   // centre of the zoomed view inside the safe zone, 0..1
+    std::string obd_addr;                // paired Bluetooth OBD-II adapter chosen on the Settings page ("AA:BB:CC:DD:EE:FF"); empty = none. Config obd_port wins when set.
 };
 
 struct Pane {                            // one video layer as the compositor should draw it

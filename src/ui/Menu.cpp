@@ -39,7 +39,7 @@ enum Style { ST_BUTTON = 0, ST_SEGMENT = 1, ST_PANE = 2, ST_PILL = 3, ST_CHIP = 
 // Which layers carry content
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 bool Menu::needsPanel(const Model& m) const {
-    if (screen_ == Screen::Settings || screen_ == Screen::Debug || screen_ == Screen::ZoneEdit) return true;
+    if (rowsPage() || screen_ == Screen::ZoneEdit) return true;
     const Layout& L = m.layout;
     if ((L.phone.visible && !L.phone.live && !m.base_art) || (L.camera.visible && !L.camera.live)) return true;   // placeholder art in the overlay somewhere
     return m.mode != Mode::FullAA;                                                                   // camera bar / window buttons
@@ -115,7 +115,7 @@ void Menu::build(const Model& m, int64_t now) {
                 y += bh + gp;
             }
         }   // no pill: nothing at all on the edge (a touch anywhere brings it back)
-    } else if (screen_ == Screen::Settings || screen_ == Screen::Debug) {
+    } else if (rowsPage()) {
         add(ID_NONE, {0, 0, W_, H_}, "", 0, false, true);                      // opaque page: swallows every touch outside the card
         buildRows(m, screen_ == Screen::Settings);
     } else {  // ZoneEdit
@@ -145,9 +145,10 @@ void Menu::buildRows(const Model& m, bool settings) {
     add(settings ? ID_CLOSE : ID_BACK, {card_.x + S(16), hy, hs, hs}, "", 0, false, true, ICON_CLOSE, ST_BUTTON);
     if (settings) add(ID_DEBUG, {card_.x + card_.w - S(16) - S(140), hy + S(4), S(140), hs - S(8)}, "Debug", S(24), false, true, ICON_NONE, ST_BUTTON);
     const Prefs& p = m.prefs;
-    const int sh = settings ? S(50) : S(44), spx = S(22), segGap = S(6), labelW = settings ? S(330) : S(180);   // Debug: shorter labels and buttons so all five rows + the readout fit   // Debug labels are short: narrower column so the override rows fit beside them
+    const bool big = settings || screen_ == Screen::ObdPair;
+    const int sh = big ? S(50) : S(44), spx = S(22), segGap = S(6), labelW = big ? S(330) : S(180);   // Debug: shorter labels and buttons so all five rows + the readout fit   // Debug labels are short: narrower column so the override rows fit beside them
     int y = card_.y + S(14) + hs + S(18);
-    auto section = [&](const char* t) { sections_.push_back({{ix, y, iw, S(22)}, t}); y += settings ? S(30) : S(27); };
+    auto section = [&](const char* t) { sections_.push_back({{ix, y, iw, S(22)}, t}); y += big ? S(30) : S(27); };
     auto row = [&](std::string label, std::string hint, std::vector<std::tuple<int, std::string, bool, bool>> segs) {
         int tot = 0; for (auto& s : segs) tot += std::max(S(76), tmp.textWidth(std::get<1>(s), spx) + S(30)) + segGap; tot -= segGap;
         const bool wide = tot > iw - labelW;
@@ -187,8 +188,21 @@ void Menu::buildRows(const Model& m, bool settings) {
             row("Camera safe zone", "The part of the picture that always stays visible when the camera is cropped",
                 {{ID_ZONE_EDIT, "Edit", false, m.camera}, {ID_ZONE_RESET, "Clear", false, !p.roi.full()}});
         }
+        if (m.energy_shown)
+            row("OBD adapter", m.obd_fixed ? "Set by obd_port in the config file" : !m.obd_current.empty() ? "Bluetooth adapter " + m.obd_current : "Pair a Bluetooth OBD-II adapter (OBDLink LX and similar)",
+                {{ID_OBD_OPEN, m.obd_current.empty() ? "Pair" : "Change", false, !m.obd_fixed}});
         row("Appearance", "Auto follows the vehicle's day and night mode", {{ID_THEME_AUTO, "Auto", p.theme == 0, true}, {ID_THEME_DARK, "Dark", p.theme == 1, true}, {ID_THEME_LIGHT, "Light", p.theme == 2, true}});
         foot_left_ = m.status; foot_right_ = m.build;
+    } else if (screen_ == Screen::ObdPair) {
+        const bool have = !m.obd_current.empty();
+        row("OBD-II adapter", have ? "Using " + m.obd_current + ". Press the button on the adapter and scan to change it." : "None paired yet. Press the button on the adapter, then tap Scan.",
+            {{ID_OBD_SCAN, m.obd_scanning ? "Stop" : "Scan", m.obd_scanning, !m.obd_pairing && !m.obd_fixed}, {ID_OBD_FORGET, "Forget", false, have && !m.obd_pairing && !m.obd_fixed}});
+        for (size_t i = 0; i < m.obd_devs.size() && i < 5; ++i) {
+            const auto& d = m.obd_devs[i];
+            std::string hint = d.addr; if (d.rssi) hint += "   " + std::to_string(d.rssi) + " dBm";
+            row(d.name.empty() ? d.addr : d.name, hint, {{ID_OBD_DEV0 + (int)i, d.addr == m.obd_current ? "Paired" : "Pair", d.addr == m.obd_current, !m.obd_pairing && !m.obd_fixed}});
+        }
+        foot_left_ = m.obd_fixed ? "The adapter is set by obd_port in the config file." : m.obd_msg; foot_right_ = m.build;
     } else {
         section("OVERRIDES (SENT TO THE PHONE)");
         row("Gear", "", {{ID_DBG_GEAR_T, "Vehicle", p.dbg_gear == 0, true}, {ID_DBG_GEAR_P, "Park", p.dbg_gear == 1, true}, {ID_DBG_GEAR_R, "Reverse", p.dbg_gear == 2, true}, {ID_DBG_GEAR_D, "Drive", p.dbg_gear == 3, true}});
@@ -468,7 +482,7 @@ void Menu::render(Canvas& c, const Model& m, int64_t now) {
     c.clear();
     build(m, now);
 
-    if (screen_ == Screen::Settings || screen_ == Screen::Debug) c.fillRoundRect({0, 0, W_, H_}, 0, Color{0, 0, 0, 255});   // opaque device-owned page
+    if (rowsPage()) c.fillRoundRect({0, 0, W_, H_}, 0, Color{0, 0, 0, 255});   // opaque device-owned page
     else if (m.mode == Mode::Energy && screen_ != Screen::ZoneEdit) drawEnergyPage(c, m);                                    // opaque data page under the pill
     else if (screen_ != Screen::ZoneEdit) drawPlaceholders(c, m);
 
@@ -502,9 +516,9 @@ void Menu::render(Canvas& c, const Model& m, int64_t now) {
         last_awake_ = awakeAt(now) || screen_ == Screen::Home;
         return;
     }
-    if (screen_ == Screen::Settings || screen_ == Screen::Debug) {
+    if (rowsPage()) {
         c.fillRoundRect(card_, S(30), kPanel);
-        c.text(card_.x + S(90), card_.y + S(14) + S(28), screen_ == Screen::Settings ? "Settings" : "Debug", S(36), kText);
+        c.text(card_.x + S(90), card_.y + S(14) + S(28), screen_ == Screen::Settings ? "Settings" : screen_ == Screen::ObdPair ? "OBD adapter" : "Debug", S(36), kText);
         const int ix = card_.x + S(30), iw = card_.w - 2 * S(30);
         for (size_t i = 0; i < rows_.size(); ++i) {
             const RowSpec& r = rows_[i];
@@ -582,7 +596,13 @@ Intent Menu::activate(int id, const Model& m) {
     case ID_SETTINGS: screen_ = Screen::Settings; break;
     case ID_PRECOND: it.kind = Intent::SetPrecond; it.i = m.precond ? 0 : 1; if (screen_ == Screen::Hidden) screen_ = Screen::Home; break;   // the pill stays open a moment so the new state is seen
     case ID_CLOSE: screen_ = Screen::Hidden; break;
-    case ID_BACK: screen_ = (screen_ == Screen::Debug) ? Screen::Settings : Screen::Hidden; break;
+    case ID_BACK:
+        if (screen_ == Screen::ObdPair) { screen_ = Screen::Settings; it.kind = Intent::CloseObdPair; break; }
+        screen_ = (screen_ == Screen::Debug) ? Screen::Settings : Screen::Hidden; break;
+    case ID_OBD_OPEN: screen_ = Screen::ObdPair; it.kind = Intent::OpenObdPair; break;
+    case ID_OBD_SCAN: it.kind = Intent::ObdScan; it.i = m.obd_scanning ? 0 : 1; break;
+    case ID_OBD_FORGET: it.kind = Intent::ObdForget; break;
+    case ID_OBD_DEV0: case ID_OBD_DEV0 + 1: case ID_OBD_DEV0 + 2: case ID_OBD_DEV0 + 3: case ID_OBD_DEV0 + 4: it.kind = Intent::ObdPick; it.i = id - ID_OBD_DEV0; break;
     case ID_DEBUG: screen_ = Screen::Debug; it.kind = Intent::OpenDebug; break;
     case ID_MODE_AA: setMode(Mode::FullAA); break;
     case ID_MODE_CAM: setMode(Mode::FullCam); break;

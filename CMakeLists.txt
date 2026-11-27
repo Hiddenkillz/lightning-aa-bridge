@@ -64,6 +64,7 @@ add_executable(aa-bridge
     src/headunit/HeadUnit.cpp
     src/headunit/HuSession.cpp
     src/headunit/BtBootstrap.cpp
+    src/headunit/BtObdPairer.cpp
     src/btcall/CallBridge.cpp
     src/NavDecode.cpp
     src/device/Device.cpp
@@ -181,5 +182,8 @@ target_include_directories(sdreq-test PRIVATE ${Protobuf_INCLUDE_DIRS})
 target_link_libraries(sdreq-test AAPProto::aap_protobuf AASDK::aasdk OpenSSL::SSL OpenSSL::Crypto ${Protobuf_LIBRARIES} pthread)
 
 # OBD-II poller: ELM327 driver + decode() unit tests against a fake adapter on a pty (no real hardware)
+add_executable(obd-pair-test tests/obd_pair_test.cpp src/headunit/BtObdPairer.cpp src/compositor/Compositor.cpp src/ui/UiController.cpp src/obd/Obd.cpp src/ui/Menu.cpp src/ui/Gfx.cpp src/ui/FontData.cpp src/ui/IconData.cpp src/ui/Placeholder.cpp src/ui/PlaceholderData.cpp)
+target_include_directories(obd-pair-test PRIVATE ${GSTREAMER_INCLUDE_DIRS} ${GST_APP_INCLUDE_DIRS} ${GST_VIDEO_INCLUDE_DIRS} ${GIOUNIX_INCLUDE_DIRS})
+target_link_libraries(obd-pair-test ${GSTREAMER_LIBRARIES} ${GST_APP_LIBRARIES} ${GST_VIDEO_LIBRARIES} ${GIOUNIX_LIBRARIES} pthread)
 add_executable(obd-test tests/obd_test.cpp src/obd/Obd.cpp)
 target_link_libraries(obd-test pthread util)

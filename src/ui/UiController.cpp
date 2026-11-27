@@ -301,6 +301,13 @@ Model UiController::modelLocked() const {
     m.build = build_tag_;
     m.light = prefs_.theme == 2 || (prefs_.theme == 0 && sent_night_ != 1);        // Auto: the appearance follows the night mode the phone is told (vehicle, or the Debug override)
     m.split_drag_enabled = splitDragOn(); m.split_dragging = split_drag_; m.split_edge = split_edge_; m.mode_changed_ms = mode_changed_ms_;
+    m.obd_current = prefs_.obd_addr; m.obd_fixed = !cfg_.obd_port.empty();
+    if (menu_.screen() == Screen::ObdPair) {
+        if (pairer_) obd_shown_ = pairer_->state(); else obd_shown_ = ObdPairState();
+        m.obd_scanning = obd_shown_.phase == ObdPairState::Scanning; m.obd_pairing = obd_shown_.phase == ObdPairState::Pairing; m.obd_msg = obd_shown_.message;
+        if (!pairer_) m.obd_msg = "Bluetooth is not available";
+        for (const auto& d : obd_shown_.devices) m.obd_devs.push_back({d.name, d.addr, d.rssi, d.obd_like});
+    }
     if (menu_.screen() == Screen::Debug) {                                           // third readout line (only read while the page is up)
         std::ostringstream s; s << "Camera " << cfg_.camera_width << "x" << cfg_.camera_height << "   ";
         std::ifstream t("/sys/class/thermal/thermal_zone0/temp"); long mc = -1; if (t >> mc) s << "CPU " << (mc + 500) / 1000 << " C   ";
@@ -605,7 +612,7 @@ bool UiController::pinchLocked(const TouchFrame& f) {
         return true;
     }
     // start (full-screen camera): second finger down while the first one is on the camera picture -> pinch zoom
-    if (raw == 5 && pts.size() >= 2 && (mode_ == Mode::FullCam || mode_ == Mode::Split) && !zone_edit_ && camera_ && menu_.screen() != Screen::Settings && menu_.screen() != Screen::Debug
+    if (raw == 5 && pts.size() >= 2 && (mode_ == Mode::FullCam || mode_ == Mode::Split) && !zone_edit_ && camera_ && menu_.screen() != Screen::Settings && menu_.screen() != Screen::Debug && menu_.screen() != Screen::ObdPair
         && router_.currentTarget() == Target::Camera) {
         double d = dist(pts[0], pts[1]);
         if (d < 12) return false;
@@ -711,6 +718,24 @@ void UiController::handleUiTouchLocked(const Routed& r) {
     }
 }
 
+void UiController::notifyObdAdapterLocked() {
+    if (!obd_cb_) return;
+    obd_cb_(!cfg_.obd_port.empty() ? cfg_.obd_port : prefs_.obd_addr.empty() ? std::string() : "bt:" + prefs_.obd_addr);
+}
+
+// Pairing finished (or any state change): adopt the new adapter and redraw if a page showing it is up.
+bool UiController::obdPairTickLocked() {
+    if (!pairer_) return false;
+    const ObdPairState st = pairer_->state();
+    if (st.serial == obd_serial_) return false;
+    obd_serial_ = st.serial;
+    if (st.phase == ObdPairState::Done && !st.paired_addr.empty() && st.paired_addr != prefs_.obd_addr && cfg_.obd_port.empty()) {
+        prefs_.obd_addr = st.paired_addr; saveLaterLocked(); notifyObdAdapterLocked();
+        std::cout << "[Ui] OBD adapter set to " << prefs_.obd_addr << std::endl;
+    }
+    return menu_.screen() == Screen::ObdPair || menu_.screen() == Screen::Settings;
+}
+
 void UiController::applyIntentLocked(const Intent& it) {
     bool save = false;
     switch (it.kind) {
@@ -750,6 +775,23 @@ void UiController::applyIntentLocked(const Intent& it) {
     case Intent::SaveRoi: prefs_.roi = it.roi; zone_edit_ = false; save = true; break;
     case Intent::BeginZoneEdit: zone_edit_ = true; break;
     case Intent::EndZoneEdit: zone_edit_ = false; break;
+    case Intent::OpenObdPair: if (pairer_ && cfg_.obd_port.empty()) pairer_->startScan(); break;
+    case Intent::CloseObdPair: if (pairer_) pairer_->stopScan(); break;
+    case Intent::ObdScan: if (pairer_ && cfg_.obd_port.empty()) { if (it.i) pairer_->startScan(); else pairer_->stopScan(); } break;
+    case Intent::ObdPick:
+        if (pairer_ && cfg_.obd_port.empty() && it.i >= 0 && (size_t)it.i < obd_shown_.devices.size()) {
+            const auto& d = obd_shown_.devices[(size_t)it.i];
+            std::cout << "[Ui] OBD adapter: pairing " << d.addr << " (" << d.name << ")" << std::endl;
+            pairer_->pair(d.addr);
+        }
+        break;
+    case Intent::ObdForget:
+        if (cfg_.obd_port.empty() && !prefs_.obd_addr.empty()) {
+            std::cout << "[Ui] OBD adapter: forgetting " << prefs_.obd_addr << std::endl;
+            if (pairer_) pairer_->forget(prefs_.obd_addr);
+            prefs_.obd_addr.clear(); save = true; notifyObdAdapterLocked();
+        }
+        break;
     default: break;
     }
     if (save) saveLaterLocked();
@@ -913,6 +955,7 @@ void UiController::loop() {
         splitCommitLocked(now);
         if (zoom_dirty_ && now - zoom_apply_ms_ >= 60) { zoom_apply_ms_ = now; zoom_dirty_ = false; applyLayoutOnlyLocked(); if (split_drag_) { split_render_ms_ = now; renderOverlayLocked(); } }   // a coalesced divider step must also move the divider
         bool changed = menu_.tick(now);
+        if (obdPairTickLocked()) changed = true;
         if (pipd_dirty_ && pipd_ == PipDrag::Dragging && now - pipd_render_ms_ >= pipd_gap_ms_) {      // trailing refresh after a throttled drag step
             renderOverlayLocked();
             const int64_t end = nowMs(); pipd_gap_ms_ = std::clamp<int64_t>(3 * (end - now), 80, 600); pipd_render_ms_ = end; pipd_dirty_ = false;
@@ -933,7 +976,7 @@ void UiController::writeStatusLocked() {
     const Prefs& p = prefs_;
     f << "{\"mode\":\"" << modeName(mode_) << "\",\"start_mode\":\"" << modeName(p.start_mode) << "\",\"phone\":" << (phone_ ? "true" : "false")
       << ",\"camera\":" << (camera_ ? "true" : "false") << ",\"moving\":" << (moving_ ? "true" : "false")
-      << ",\"menu\":\"" << (menu_.screen() == Screen::Hidden ? "hidden" : menu_.screen() == Screen::Home ? "home" : menu_.screen() == Screen::Settings ? "settings" : menu_.screen() == Screen::Debug ? "debug" : "zone") << "\""
+      << ",\"menu\":\"" << (menu_.screen() == Screen::Hidden ? "hidden" : menu_.screen() == Screen::Home ? "home" : menu_.screen() == Screen::Settings ? "settings" : menu_.screen() == Screen::Debug ? "debug" : menu_.screen() == Screen::ObdPair ? "obd" : "zone") << "\""
       << ",\"touch\":[" << touch_w_ << "," << touch_h_ << "],\"pip_corner\":\"" << cornerName(p.pip_corner) << "\",\"pip_size\":\"" << sizeName(p.pip_size)
       << "\",\"split_ratio\":" << p.split_ratio << ",\"auto_cam_reverse\":" << (p.auto_cam_reverse ? "true" : "false")
       << ",\"roi\":[" << p.roi.x << "," << p.roi.y << "," << p.roi.w << "," << p.roi.h << "]}\n";
@@ -943,6 +986,12 @@ void UiController::writeStatusLocked() {
 
 // A hand-edited, truncated or corrupted prefs file must never put the UI into an undefined state: non-finite numbers are rejected
 // (std::stod accepts "nan"/"inf", and std::clamp passes NaN straight through), numbers are range-limited, anything unparsable is ignored.
+
+static bool validBtAddr(const std::string& a) {   // "AA:BB:CC:DD:EE:FF" only: the value ends up in an RFCOMM address and in log lines
+    if (a.size() != 17) return false;
+    for (size_t i = 0; i < 17; ++i) { if (i % 3 == 2) { if (a[i] != ':') return false; } else if (!isxdigit((unsigned char)a[i])) return false; }
+    return true;
+}
 
 bool UiController::loadPrefs(const std::string& path, Prefs& p) {
     std::ifstream f(path);
@@ -975,6 +1024,7 @@ bool UiController::loadPrefs(const std::string& path, Prefs& p) {
             else if (k == "cam_flip") p.cam_flip = (v == "1");
             else if (k == "cam_zoom") p.cam_zoom = finiteOr(std::stod(v), 1.0, 4.0, p.cam_zoom);
             else if (k == "cam_center") { std::istringstream r(v); double a = 0.5, b = 0.5; if (r >> a >> b) { p.cam_cx = finiteOr(a, 0, 1, 0.5); p.cam_cy = finiteOr(b, 0, 1, 0.5); } }
+            else if (k == "obd_addr") { if (validBtAddr(v)) p.obd_addr = v; }
             else if (k == "roi") { std::istringstream r(v); Prefs t = p; if ((r >> t.roi.x >> t.roi.y >> t.roi.w >> t.roi.h) && std::isfinite(t.roi.x) && std::isfinite(t.roi.y) && std::isfinite(t.roi.w) && std::isfinite(t.roi.h)) { p.roi = t.roi; p.roi.clamp(); } }
         } catch (...) {}
     }
@@ -989,7 +1039,8 @@ bool UiController::savePrefs(const std::string& path, const Prefs& p) {
         << "\npip_px=" << p.pip_px << "\npip_py=" << p.pip_py << "\npip_size=" << sizeName(p.pip_size) << "\npip_frac=" << p.pip_frac << "\nsplit_h=" << p.split_ratio << "\nauto_cam_reverse=" << (p.auto_cam_reverse ? 1 : 0)
         << "\nroi=" << p.roi.x << " " << p.roi.y << " " << p.roi.w << " " << p.roi.h
         << "\ndbg_gear=" << p.dbg_gear << "\ndbg_driving=" << p.dbg_driving << "\ndbg_night=" << p.dbg_night << "\nstart_settings=" << (p.start_settings ? 1 : 0) << "\nstart_last=" << (p.start_last ? 1 : 0) << "\nlast_mode=" << modeName(p.last_mode) << "\ncam_fill=" << (p.cam_fill ? 1 : 0) << "\ncam_mirror=" << (p.cam_mirror ? 1 : 0) << "\ncam_flip=" << (p.cam_flip ? 1 : 0)
-        << "\ncam_zoom=" << p.cam_zoom << "\ncam_center=" << p.cam_cx << " " << p.cam_cy << "\ntheme=" << p.theme << "\nsplit_drag=" << (p.split_drag ? 1 : 0) << "\n"; }
+        << "\ncam_zoom=" << p.cam_zoom << "\ncam_center=" << p.cam_cx << " " << p.cam_cy << "\ntheme=" << p.theme << "\nsplit_drag=" << (p.split_drag ? 1 : 0) << "\n";
+      if (!p.obd_addr.empty()) f << "obd_addr=" << p.obd_addr << "\n"; }
     // Durable replace: the data must be on the card BEFORE the rename, otherwise a power cut right after a settings change can leave a
     // renamed-but-empty prefs file (all settings lost). Then the directory entry is synced too.
     { int fd = ::open(tmp.c_str(), O_RDONLY); if (fd >= 0) { ::fsync(fd); ::close(fd); } }

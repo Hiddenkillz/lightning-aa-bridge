@@ -31,7 +31,7 @@ The Pi runs two Android Auto sessions at once. On the phone side it is a head un
 
 Calls use the same trick with two USB Bluetooth radios: one is the "car" the phone talks hands-free to, the other is the "phone" Sync talks hands-free to, and call audio is relayed between them. Sync shows its normal call screen; the phone thinks it is in an ordinary car.
 
-Vehicle data beyond what AA provides comes from a USB OBD-II adapter (a vLinker FS) talking to the Lightning's battery, powertrain and body modules with the same requests FORScan and the community Torque/Car Scanner PID lists use. Read-only; the bridge never writes to a module.
+Vehicle data beyond what AA provides comes from a USB OBD-II adapter (a vLinker FS) talking to the Lightning's battery, powertrain and body modules with the same requests FORScan and the community Torque/Car Scanner PID lists use. Read-only; the bridge never writes to a module. A Bluetooth Classic (SPP) ELM327 works too: pair and trust it once with `bluetoothctl`, then set `obd_port=bt:AA:BB:CC:DD:EE:FF` (optionally `/channel`, default 1). BLE-only adapters are not supported.
 
 ## Hardware
 
