@@ -760,14 +760,26 @@ int main(int argc, char** argv) {
             ctl.command("dbg gear 3"); wait(300); CHK(ctl.mode() == ui::Mode::FullAA, "gear override Drive returns to the previous layout");
             ctl.command("dbg gear 0"); ctl.command("reverse 1"); wait(300); CHK(ctl.mode() == ui::Mode::FullCam, "truck reverse (gear = Truck) switches to the camera");
             ctl.command("reverse 0"); wait(300); CHK(ctl.mode() == ui::Mode::FullAA, "truck out of reverse returns");
+#ifdef AA_BRIDGE_DEBUG_SENSORS
             ctl.command("dbg driving 2"); wait(200); CHK(sd == 26, "driving override Moving -> phone told 26");
+#else
+            std::cout << "[gest] skip driving overrides (needs a build with -DAA_BRIDGE_DEBUG_SENSORS=ON; the override is compiled out of vehicle builds)" << std::endl;
+#endif
             ctl.command("dbg driving 0"); ctl.command("truck 6 2"); wait(200); CHK(sd == 2, "driving = Truck follows the truck's own status mask");
+#ifdef AA_BRIDGE_DEBUG_SENSORS
             ctl.command("dbg driving 1"); wait(200); CHK(sd == 0, "driving override Parked -> phone told 0");
+#endif
             ctl.command("dbg night 2"); wait(200); CHK(sn == 1, "night override Night -> phone told night");
             ctl.command("dbg night 0"); ctl.command("truck 7 1"); wait(200); CHK(sn == 1, "night = Truck follows the truck");
             ctl.command("truck 7 0"); wait(200); CHK(sn == 0, "truck says day -> phone told day");
             ctl.command("dbg night 1"); wait(200); CHK(sn == 0, "night override Day -> phone told day");
-            { std::ifstream pf(s.prefs_path); std::string all((std::istreambuf_iterator<char>(pf)), {}); CHK(all.find("dbg_driving=1") != std::string::npos && all.find("dbg_night=1") != std::string::npos, "Debug overrides persist in the prefs file"); }
+            { std::ifstream pf(s.prefs_path); std::string all((std::istreambuf_iterator<char>(pf)), {}); 
+#ifdef AA_BRIDGE_DEBUG_SENSORS
+              const bool drv = all.find("dbg_driving=1") != std::string::npos;
+#else
+              const bool drv = true;                      // the driving override is compiled out of vehicle builds; only the night override is exercised
+#endif
+              CHK(drv && all.find("dbg_night=1") != std::string::npos, "Debug overrides persist in the prefs file"); }
         }
         // prefs are written asynchronously (never on the touch path): a change made right before shutdown must still reach the file
         ctl.command("size 0.41"); ctl.stop();

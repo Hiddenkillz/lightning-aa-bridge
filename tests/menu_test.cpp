@@ -171,7 +171,7 @@ int main(int argc, char** argv) {
     for (int id : {ID_START_AA, ID_START_CAM, ID_START_SPLIT, ID_START_PIP, ID_START_LAST, ID_THEME_AUTO, ID_THEME_DARK, ID_THEME_LIGHT}) CHECK(findBtn(m, id));
     CHECK(!findBtn(m, ID_START_SETTINGS));                                                                                            // "start on Settings" is no longer offered
     { const UiButton* a = findBtn(m, ID_START_AA); const UiButton* l = findBtn(m, ID_START_LAST); const UiButton* t3 = findBtn(m, ID_SPLIT_33);
-      CHECK(a && l && a->rect.y == l->rect.y && a->rect.w == l->rect.w && a->rect.x < W / 4 && l->rect.x + l->rect.w > W * 3 / 4);   // five start options: a full-width row of equal segments
+      CHECK(a && l && a->rect.y == l->rect.y && a->rect.h == l->rect.h && a->rect.x > W / 2 && l->rect.x + l->rect.w > W * 3 / 4 && l->rect.x + l->rect.w <= W);   // five start options: one right-aligned row (segments sized to their labels), all on screen
       CHECK(t3 && t3->rect.x > W / 2);                                                                                               // three segments fit beside the label: right column
       it = m.activate(ID_THEME_LIGHT, md); CHECK(it.kind == Intent::SetTheme && it.i == 2);
       md.light = true; m.render(c, md, t); save("settings-light", c, bg); CHECK(c.data()[(((size_t)(H / 2)) * W + W / 2) * 4] > 200);   // light card: bright pixel mid-card
@@ -190,7 +190,11 @@ int main(int argc, char** argv) {
     it = m.activate(ID_DEBUG, md); CHECK(it.kind == Intent::OpenDebug && m.screen() == Screen::Debug);
     md.truck_line1 = "Gear P   Parking brake on   Speed 0 km/h"; md.truck_line2 = "Driving status 0   Night no   Sent to phone: 0 / day"; md.status = "Phone connected  |  Camera OK";
     m.render(c, md, t); save("debug", c, bg); CHECK(findBtn(m, ID_BACK) && findBtn(m, ID_BACK)->rect.x < W / 3);
-    for (int id : {ID_DBG_GEAR_T, ID_DBG_GEAR_P, ID_DBG_GEAR_R, ID_DBG_GEAR_D, ID_DBG_DRV_T, ID_DBG_DRV_PARKED, ID_DBG_DRV_MOVING, ID_DBG_NIGHT_T, ID_DBG_NIGHT_DAY, ID_DBG_NIGHT_NIGHT}) CHECK(findBtn(m, id));
+    for (int id : {ID_DBG_GEAR_T, ID_DBG_GEAR_P, ID_DBG_GEAR_R, ID_DBG_GEAR_D,
+#ifdef AA_BRIDGE_DEBUG_SENSORS
+                   ID_DBG_DRV_T, ID_DBG_DRV_PARKED, ID_DBG_DRV_MOVING,       // the "Driving status" override row exists only in debug-sensor builds (Menu.cpp)
+#endif
+                   ID_DBG_NIGHT_T, ID_DBG_NIGHT_DAY, ID_DBG_NIGHT_NIGHT}) CHECK(findBtn(m, id));
     it = m.activate(ID_DBG_GEAR_R, md); CHECK(it.kind == Intent::SetDbgGear && it.i == 2);
     it = m.activate(ID_DBG_GEAR_T, md); CHECK(it.kind == Intent::SetDbgGear && it.i == 0);
     it = m.activate(ID_DBG_DRV_MOVING, md); CHECK(it.kind == Intent::SetDbgDriving && it.i == 2);
