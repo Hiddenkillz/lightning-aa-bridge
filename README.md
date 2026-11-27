@@ -19,7 +19,7 @@ It started as a replacement for an Ottocast adapter that kept failing. It is my 
 | Phone calls through Sync's own phone UI (caller ID on the cluster, steering-wheel answer/hang-up), phone never paired with Sync | Works; stability under long calls still being proven |
 | Battery preconditioning button on the AA screen | Works |
 | Energy page: live power (kW), 30-second mi/kWh, pack temperatures, battery health, 12 V battery, preconditioning state, from the truck's modules over OBD-II | **Beta** (first drives now) |
-| Energy data as a resizable window next to the camera window | Planned |
+| Energy data as a window or split pane (in the camera's place when `camera_enable=0` and `obd_enable=1`) | Beta |
 | HD voice (wideband calls) | Planned, depends on hardware tests |
 | Read-only root, signed updates, in-vehicle certificate refresh | Planned (needed before this is "a device you don't think about") |
 
@@ -43,7 +43,7 @@ Everything is off the shelf. Rough US prices as of late 2026.
 | 32 GB+ microSD, decent case with some airflow | runs warm on long drives | $15 |
 | USB-C to USB-C cable, short, data-capable | one cable does both: Sync's USB-C port supplies 5 V / 3 A, which powers the Pi, and carries the Android Auto data. It has to be the USB-C port; the USB-A port can't power a Pi 4 | $8 |
 | 2 × USB Bluetooth 5.x dongles | cheap ones work with some effort; see notes | $10 each |
-| USB camera (UVC) with IR night vision, 90–120° lens | optional. any webcam works; IR for the baby-cam use. No camera: set `camera_enable=0` and the camera, window and split modes disappear (Android Auto, Energy and the rest stay) | $40 |
+| USB camera (UVC) with IR night vision, 90–120° lens | optional. any webcam works; IR for the baby-cam use. No camera: set `camera_enable=0`; the window and split panes then show the Energy readouts (with `obd_enable=1`), or disappear if OBD is off | $40 |
 | vLinker FS (OBD-II to USB) | optional, for the Energy page | $50 |
 
 The Pi's four USB ports are exactly full: two radios, camera, OBD adapter (three without the camera).

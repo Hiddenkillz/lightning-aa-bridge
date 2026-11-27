@@ -37,7 +37,7 @@ struct Config {
     std::string hu_key         = "/etc/aa-bridge/hu_key.pem";
 
     // Camera RTSP
-    bool camera_enable         = true;   // 0 = no camera at all: no camera pipeline branch, no camera/window/split modes or settings in the UI (Android Auto + Energy only)
+    bool camera_enable         = true;   // 0 = no camera at all: no camera pipeline branch and no full-screen camera. With obd_enable=1 the window and split panes show a compact Energy panel instead; without it they are gone too (Android Auto only)
     std::string camera_rtsp    = "rtsp://192.168.50.2:554/mjpeg/1";
     int camera_overlay_x       = 0;    // pixels from right edge
     int camera_overlay_y       = 0;    // pixels from bottom edge

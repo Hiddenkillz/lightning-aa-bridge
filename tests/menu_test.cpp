@@ -251,18 +251,43 @@ int main(int argc, char** argv) {
       auto hit = r.route(W - 20, H / 2, Action::Down); CHECK(hit.target == Target::Phone); r.route(W - 20, H / 2, Action::Up);
       hit = r.route(300, 300, Action::Down); CHECK(hit.target == Target::Phone); r.route(300, 300, Action::Up); }
 
-    // ---- camera_enable=0: the pill has Android Auto, Energy (when shown) and Settings only; Settings has no camera rows ----
+    // ---- camera_enable=0, OBD off: the pill has Android Auto and Settings only; Settings has no camera / window / split rows ----
     {
         Menu nm(W, H); Canvas nc(W, H);
-        Model nocam = mk(Mode::FullAA, true, false); nocam.camera_enabled = false; nocam.energy_shown = true;
-        nm.noteActivity(t);
-        nm.render(nc, nocam, t);
-        CHECK(nm.pillOpen(nocam) && findBtn(nm, ID_MODE_AA) && findBtn(nm, ID_MODE_ENERGY) && findBtn(nm, ID_SETTINGS));
-        CHECK(!findBtn(nm, ID_MODE_CAM) && !findBtn(nm, ID_MODE_PIP) && !findBtn(nm, ID_MODE_SPLIT) && nm.buttons().size() == 3);
+        Model nocam = mk(Mode::FullAA, true, false); nocam.camera_enabled = false;
+        nm.noteActivity(t); nm.render(nc, nocam, t);
+        CHECK(nm.pillOpen(nocam) && findBtn(nm, ID_MODE_AA) && findBtn(nm, ID_SETTINGS) && nm.buttons().size() == 2);
+        CHECK(!findBtn(nm, ID_MODE_CAM) && !findBtn(nm, ID_MODE_PIP) && !findBtn(nm, ID_MODE_SPLIT) && !findBtn(nm, ID_MODE_ENERGY));
         nm.activate(ID_SETTINGS, nocam); nm.render(nc, nocam, t + 10);
         CHECK(nm.screen() == Screen::Settings && findBtn(nm, ID_START_AA) && findBtn(nm, ID_START_LAST));
         CHECK(!findBtn(nm, ID_START_CAM) && !findBtn(nm, ID_START_PIP) && !findBtn(nm, ID_START_SPLIT) && !findBtn(nm, ID_ZONE_EDIT) && !findBtn(nm, ID_SPLIT_50));
         CHECK(findBtn(nm, ID_THEME_AUTO));
+    }
+    // ---- camera_enable=0, OBD on: window and split show a compact Energy panel instead of the camera ----
+    {
+        Menu nm(W, H); Canvas nc(W, H);
+        auto en = [&](Mode md, bool wake) {
+            Model e = mk(md, true, false); e.camera_enabled = false; e.pane_energy = true; e.energy_shown = true;
+            e.layout = compute(md, Prefs(), W, H, 640, 360, true, false, true, true);
+            e.energy_big_a = "42.5 kW"; e.energy_big_a_label = "Power"; e.energy_big_b = "2.1"; e.energy_big_b_label = "mi/kWh (30 s)";
+            for (int k = 0; k < 8; ++k) e.energy_rows.push_back({"Row " + std::to_string(k), std::to_string(k * 11), "V", 0});
+            if (wake) nm.noteActivity(t);
+            return e; };
+        Model pip = en(Mode::Pip, true);
+        nm.render(nc, pip, t);
+        CHECK(findBtn(nm, ID_MODE_AA) && findBtn(nm, ID_MODE_PIP) && findBtn(nm, ID_MODE_SPLIT) && findBtn(nm, ID_MODE_ENERGY) && findBtn(nm, ID_SETTINGS) && !findBtn(nm, ID_MODE_CAM));
+        { const Rect r = pip.layout.camera.rect; CHECK(!pip.layout.camera.live && pip.layout.camera.visible && r.w > 0);
+          CHECK(alphaAt(nc, r.x + r.w / 2, r.y + r.h / 2) == 255 && alphaAt(nc, r.x + r.w / 2, r.y + 2) == 255);              // an opaque panel where the camera would be
+          const Rect b = nc.contentBounds(); CHECK(b.w > 0);
+          save("energy-pane-pip", nc, bg); }
+        Intent mx = nm.activate(ID_PANE_MAX, pip); CHECK(mx.kind == Intent::SetMode && mx.i == (int)Mode::Energy);          // Max opens the full Energy page
+        Model spl = en(Mode::Split, true);
+        nm.render(nc, spl, t + 100);
+        { const Rect r = spl.layout.camera.rect; CHECK(r.x == 0 && r.w == W && r.y + r.h == H && r.h > H / 3);                   // the panel fills the whole lower pane
+          CHECK(alphaAt(nc, r.x + 4, r.y + r.h - 4) == 255); save("energy-pane-split", nc, bg); }
+        nm.activate(ID_SETTINGS, pip); nm.render(nc, pip, t + 200);
+        CHECK(findBtn(nm, ID_START_AA) && findBtn(nm, ID_START_PIP) && findBtn(nm, ID_START_SPLIT) && findBtn(nm, ID_START_LAST) && findBtn(nm, ID_SPLIT_50));
+        CHECK(!findBtn(nm, ID_START_CAM) && !findBtn(nm, ID_ZONE_EDIT));
     }
     std::printf(fails ? "%d FAILED\n" : "ALL PASSED\n", fails);
     return fails != 0;

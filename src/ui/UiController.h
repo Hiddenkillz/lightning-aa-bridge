@@ -81,8 +81,15 @@ public:
     void onTouchFrame(const TouchFrame& f);
 
     void setMode(Mode m);
-    // With camera_enable=0 the camera-bearing modes (full camera, window, split) do not exist: they fall back to Android Auto.
-    Mode allowedMode(Mode m) const { return (!cfg_.camera_enable && (m == Mode::FullCam || m == Mode::Pip || m == Mode::Split)) ? Mode::FullAA : m; }
+    // With camera_enable=0 there is no camera. If the OBD poller is on, the window and split panes show a compact Energy panel (paneEnergy) and a request for
+    // the full-screen camera opens the Energy page; without OBD every camera-bearing mode falls back to Android Auto.
+    bool paneEnergy() const { return !cfg_.camera_enable && cfg_.obd_enable; }
+    Mode allowedMode(Mode m) const {
+        if (cfg_.camera_enable) return m;
+        if (m == Mode::FullCam) return paneEnergy() ? Mode::Energy : Mode::FullAA;
+        if (m == Mode::Pip || m == Mode::Split) return paneEnergy() ? m : Mode::FullAA;
+        return m;
+    }
     void command(const std::string& line);
 
     Mode mode() const { std::lock_guard<std::mutex> l(m_); return mode_; }

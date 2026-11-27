@@ -133,7 +133,7 @@ inline Roi viewRoi(const Prefs& p) {
 }
 
 // cam_w/cam_h: camera source resolution (for crop pixels and aspect).
-inline Layout compute(Mode mode, const Prefs& p, int W, int H, int cam_w, int cam_h, bool phone_present, bool camera_present, bool phone_reshaped = true) {
+inline Layout compute(Mode mode, const Prefs& p, int W, int H, int cam_w, int cam_h, bool phone_present, bool camera_present, bool phone_reshaped = true, bool fill_pane = false) {
     Layout L;
     Roi roi = viewRoi(p);
     const double sw = cam_w > 0 ? cam_w : 1280, sh = cam_h > 0 ? cam_h : 720;
@@ -173,7 +173,7 @@ inline Layout compute(Mode mode, const Prefs& p, int W, int H, int cam_w, int ca
         const Rect top{0, 0, W, ph}, bottom{0, ph, W, H - ph};
         L.phone_pane = top;
         L.phone = {true, phone_reshaped ? top : fit(top, W, H)};   // reshaped: the phone's UI fills the pane. Otherwise the whole window picture is scaled down into it
-        L.camera = {true, fit(bottom, cw, ch)};
+        L.camera = {true, fill_pane ? bottom : fit(bottom, cw, ch)};   // fill_pane: the Energy panel uses the whole lower pane (no picture aspect to keep)
         { const int bh = std::max(24, (int)std::lround(H * 0.05)); L.split_handle = {0, ph - bh / 2, W, bh}; }   // grab band centred on the divider (5% of the height)
         break;
     }

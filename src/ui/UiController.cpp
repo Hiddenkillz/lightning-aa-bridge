@@ -292,7 +292,7 @@ Model UiController::modelLocked() const {
           << "   Sent to phone: " << (sent_driving_ < 0 ? 0 : sent_driving_) << (sent_night_ == 1 ? " / night" : " / day");
         m.truck_line1 = a.str(); m.truck_line2 = b.str();
     }
-    m.camera_enabled = cfg_.camera_enable; m.energy_shown = cfg_.obd_enable; if (m.energy_shown) fillEnergyLocked(m);
+    m.camera_enabled = cfg_.camera_enable; m.pane_energy = paneEnergy(); m.energy_shown = cfg_.obd_enable; if (m.energy_shown) fillEnergyLocked(m);
     m.precond_shown = cfg_.precondition_button; m.precond = precond_; m.base_art = comp_->baseArt(); m.pip_corners = cfg_.pip_corners; m.corner_restore = cfg_.pip_corner_restore && comp_->uiBlender(); m.pip_dragging = pipd_ == PipDrag::Dragging || pinch_ != Pinch::None;   // window moving/resizing: no corner covers (they would trail)
     m.mode = mode_; m.prefs = prefs_; m.phone = phone_; m.camera = camera_; m.moving = moving_; m.layout = layout_;
     Prefs full = prefs_; full.roi = Roi(); full.cam_zoom = 1.0; full.cam_fill = false;
@@ -361,9 +361,10 @@ void UiController::applyLayoutOnlyLocked() {
     Mode m = mode_; Prefs p = prefs_; bool ph = phone_ && !(m == Mode::Split && (split_drag_ || split_hold_)), cam = camera_ && !(m == Mode::Split && split_drag_);   // Split drag: both panes are placeholders while the finger is down (the camera is resized ONCE, on release); the phone pane stays a placeholder until the phone has laid out for the final size
     if (split_drag_ && m == Mode::Split) p.split_ratio = std::clamp(split_frac_, 0.25, 0.75);
     if (zone_edit_) { m = Mode::FullCam; p.roi = Roi(); p.cam_zoom = 1.0; p.cam_fill = false; ph = false; cam = true; }   // show the whole camera frame while drawing the zone
+    const int paneW = paneEnergy() ? 640 : cfg_.camera_width, paneH = paneEnergy() ? 360 : cfg_.camera_height;   // the Energy panel is laid out like a 16:9 picture
     const bool want = cfg_.split_reshape && m == Mode::Split && phone_ && ui_config_cb_;      // phone_: its first picture is up (the session is ready for control messages)
-    layout_ = compute(m, p, vw_, vh_, cfg_.camera_width, cfg_.camera_height, ph, cam, !want || reshape_ == Reshape::Accepted ? true : false);
-    if (m == Mode::Split && !want) layout_ = compute(m, p, vw_, vh_, cfg_.camera_width, cfg_.camera_height, ph, cam, true);
+    layout_ = compute(m, p, vw_, vh_, paneW, paneH, ph, cam, !want || reshape_ == Reshape::Accepted ? true : false, paneEnergy());
+    if (m == Mode::Split && !want) layout_ = compute(m, p, vw_, vh_, paneW, paneH, ph, cam, true, paneEnergy());
     // phone re-layout bookkeeping (margins are in the codec frame: window offset + what is left of it)
     const int FW = cfg_.video_width, FH = cfg_.video_height, pane_h = layout_.phone_pane.h;
     const bool frozen = m == Mode::Split && (split_drag_ || split_pending_);          // divider being dragged / settling: no requests to the phone until the commit
@@ -372,7 +373,7 @@ void UiController::applyLayoutOnlyLocked() {
         reshape_ = Reshape::Requested; reshape_h_ = pane_h; reshape_ms_ = nowMs();
         std::cout << "[Ui] split reshape: asking the phone for a " << vw_ << "x" << pane_h << " UI (margins l" << vx_ << " r" << std::max(0, FW - vx_ - vw_) << " t" << vy_ << " b" << std::max(0, FH - vy_ - pane_h) << ")" << std::endl;
         ui_config_cb_(vx_, std::max(0, FW - vx_ - vw_), vy_, std::max(0, FH - vy_ - pane_h));
-        layout_ = compute(m, p, vw_, vh_, cfg_.camera_width, cfg_.camera_height, ph, cam, false);
+        layout_ = compute(m, p, vw_, vh_, paneW, paneH, ph, cam, false, paneEnergy());
     } else if (!want && (reshape_ == Reshape::Requested || reshape_ == Reshape::Accepted)) {
         if (phone_session_ && ui_config_cb_) { std::cout << "[Ui] split reshape: leaving Split, restoring the full window layout" << std::endl; ui_config_cb_(vx_, std::max(0, FW - vx_ - vw_), vy_, std::max(0, FH - vy_ - vh_)); reshape_ = Reshape::Restoring; reshape_ms_ = nowMs(); restore_tries_ = 1; }
         else { reshape_ = Reshape::None; reshape_h_ = 0; }
@@ -782,7 +783,7 @@ void UiController::splitDragLocked(int ox, int oy, Action a) {
     // release
     split_drag_ = false;
     if (split_edge_ != 0) {
-        mode_ = prev_mode_ = split_edge_ < 0 ? Mode::FullCam : Mode::FullAA; split_edge_ = 0; split_hold_ = false;
+        mode_ = prev_mode_ = allowedMode(split_edge_ < 0 ? Mode::FullCam : Mode::FullAA); split_edge_ = 0; split_hold_ = false;
         std::cout << "[Ui] split drag end: released in the " << (mode_ == Mode::FullCam ? "top" : "bottom") << " zone -> " << modeName(mode_) << std::endl;
         applyLocked();
         return;
@@ -916,7 +917,7 @@ void UiController::loop() {
             renderOverlayLocked();
             const int64_t end = nowMs(); pipd_gap_ms_ = std::clamp<int64_t>(3 * (end - now), 80, 600); pipd_render_ms_ = end; pipd_dirty_ = false;
         } else if (pipd_ != PipDrag::Dragging) pipd_dirty_ = false;
-        if (mode_ == Mode::Energy && obd_have_ && now - energy_render_ms_ >= 1000) { energy_render_ms_ = now; changed = true; }   // live page: 1 Hz refresh
+        if ((mode_ == Mode::Energy || (paneEnergy() && (mode_ == Mode::Pip || mode_ == Mode::Split) && pipd_ != PipDrag::Dragging && !split_drag_)) && obd_have_ && now - energy_render_ms_ >= 1000) { energy_render_ms_ = now; changed = true; }   // live page: 1 Hz refresh
         if (changed && menu_.screen() == Screen::Hidden && !Menu::fullPage(mode_)) std::cout << "[Ui] pill sleep" << std::endl;
         if (changed) { renderOverlayLocked(); writeStatusLocked(); }
         else if (!comp_->uiBlender() && now - last_overlay_push_ > 1000) { repushOverlayLocked(); last_overlay_push_ = now; }                  // 1 Hz keepalive keeps the live compositor pad fed (no re-render)

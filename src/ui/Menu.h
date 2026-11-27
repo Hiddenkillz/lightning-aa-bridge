@@ -45,6 +45,7 @@ struct Model {
     Mode mode = Mode::FullCam;
     Prefs prefs;
     bool camera_enabled = true;           // config camera_enable: false hides every camera-related control
+    bool pane_energy = false;             // no camera but OBD on: the window / split pane shows a compact Energy panel instead of the camera
     bool phone = false, camera = false;   // a LIVE video source feeds the phone / camera pane
     Layout layout;                        // pane rectangles in window coordinates (panes without a live source are placeholders)
     bool moving = false;                  // informational only (no lock): vehicle speed state
@@ -114,6 +115,7 @@ public:
     void setScreen(Screen s) { screen_ = s; }
     bool pillOpen(const Model& m) const { return screen_ == Screen::Home || (screen_ == Screen::Hidden && (fullPage(m.mode) || awakeAt(now_))); }
     void drawEnergyPage(Canvas& c, const Model& m);
+    void drawEnergyPane(Canvas& c, const Model& m, const Rect& r, int radius);   // compact Energy panel in a window / split pane
 
 private:
     struct Widget { int id; Rect r; std::string label; int px; bool selected; bool enabled; int icon; int style; };   // style: 0 button, 1 segment, 2 pane (translucent), 3 pill, 4 bar chip

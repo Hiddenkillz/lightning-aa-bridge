@@ -96,12 +96,12 @@ void Menu::build(const Model& m, int64_t now) {
             const bool pc = m.precond_shown, en = m.energy_shown;          // 6-7 buttons instead of 5: the strip height is fixed, so they get a little smaller
             struct B { int id; int ic; Mode md; bool isMode; bool divBefore; };
             std::vector<B> bs = {{ID_MODE_AA, ICON_AA, Mode::FullAA, true, false}};
-            if (m.camera_enabled) {                                        // camera_enable=0: no camera, window or split buttons
-                bs.push_back({ID_MODE_CAM, ICON_CAM, Mode::FullCam, true, false});
+            if (m.camera_enabled) bs.push_back({ID_MODE_CAM, ICON_CAM, Mode::FullCam, true, false});      // camera_enable=0: no full-screen camera
+            if (m.camera_enabled || m.pane_energy) {                       // window and split need a second pane: the camera, or the Energy panel
                 bs.push_back({ID_MODE_PIP, ICON_PIP, Mode::Pip, true, true});
                 bs.push_back({ID_MODE_SPLIT, ICON_SPLIT, Mode::Split, true, false});
             }
-            if (en) bs.push_back({ID_MODE_ENERGY, ICON_ENERGY, Mode::Energy, true, m.camera_enabled});
+            if (en) bs.push_back({ID_MODE_ENERGY, ICON_ENERGY, Mode::Energy, true, true});
             if (pc) bs.push_back({ID_PRECOND, ICON_PRECOND, Mode::FullAA, false, !en});
             bs.push_back({ID_SETTINGS, ICON_GEAR, Mode::FullAA, false, !pc && !en});
             const int n = (int)bs.size(), bw = S(60), divh = S(12), gp = (pc || en) ? S(5) : S(6);
@@ -175,13 +175,17 @@ void Menu::buildRows(const Model& m, bool settings) {
         if (m.camera_enabled)
             row("Start on", "What the screen shows when the vehicle starts", {{ID_START_AA, "Android", on(Mode::FullAA), true}, {ID_START_CAM, "Camera", on(Mode::FullCam), true},
                 {ID_START_PIP, "Window", on(Mode::Pip), true}, {ID_START_SPLIT, "Split", on(Mode::Split), true}, {ID_START_LAST, "Last", sl, true}});
+        else if (m.pane_energy)
+            row("Start on", "What the screen shows when the vehicle starts", {{ID_START_AA, "Android", on(Mode::FullAA), true},
+                {ID_START_PIP, "Window", on(Mode::Pip), true}, {ID_START_SPLIT, "Split", on(Mode::Split), true}, {ID_START_LAST, "Last", sl, true}});
         else
             row("Start on", "What the screen shows when the vehicle starts", {{ID_START_AA, "Android", !sl && !ss, true}, {ID_START_LAST, "Last", sl, true}});
-        if (m.camera_enabled) {                                    // camera-only settings
+        if (m.camera_enabled || m.pane_energy) {                   // second-pane settings
         row("Split: phone share", m.split_drag_enabled ? "How much of the screen the phone gets in Split. Drag the divider for any other size." : "How much of the screen the phone gets in Split",
             {{ID_SPLIT_33, "1/3", std::fabs(p.split_ratio - 0.33) < 0.04, true}, {ID_SPLIT_50, "1/2", std::fabs(p.split_ratio - 0.5) < 0.04, true}, {ID_SPLIT_67, "2/3", std::fabs(p.split_ratio - 0.67) < 0.04, true}});
-        row("Camera safe zone", "The part of the picture that always stays visible when the camera is cropped",
-            {{ID_ZONE_EDIT, "Edit", false, m.camera}, {ID_ZONE_RESET, "Clear", false, !p.roi.full()}});
+        if (m.camera_enabled)
+            row("Camera safe zone", "The part of the picture that always stays visible when the camera is cropped",
+                {{ID_ZONE_EDIT, "Edit", false, m.camera}, {ID_ZONE_RESET, "Clear", false, !p.roi.full()}});
         }
         row("Appearance", "Auto follows the vehicle's day and night mode", {{ID_THEME_AUTO, "Auto", p.theme == 0, true}, {ID_THEME_DARK, "Dark", p.theme == 1, true}, {ID_THEME_LIGHT, "Light", p.theme == 2, true}});
         foot_left_ = m.status; foot_right_ = m.build;
@@ -400,6 +404,38 @@ void Menu::drawEnergyPage(Canvas& c, const Model& m) {
     if (!m.build.empty()) { const int bw = c.textWidth(m.build, S(18)); c.text(mg + cw - bw, H_ - S(28), m.build, S(18), kDim); }
 }
 
+// Compact Energy panel for the window / split pane: the two big readouts side by side, then as many rows as fit. Everything is sized from the pane (a small
+// window shows just the two readouts); text is shrunk until it fits its cell, so nothing runs outside the rectangle.
+void Menu::drawEnergyPane(Canvas& c, const Model& m, const Rect& r, int radius) {
+    Color bg = kPaneBg; bg.a = 255;                              // opaque: live Android Auto must not show through the numbers
+    c.fillRoundRect(r, radius, bg);
+    const int pad = std::max(S(8), r.h / 22), iw = r.w - 2 * pad, gap = pad;
+    const int tileh = r.h >= S(260) ? std::min(r.h * 2 / 5, S(150)) : r.h - 2 * pad;     // tall pane: tiles on top, rows below; small pane: the tiles fill it
+    const int tw = (iw - gap) / 2;
+    const int lpx = std::clamp(tileh / 7, S(11), S(22)), maxbig = std::clamp(tileh * 55 / 100, S(18), S(84));
+    auto tile = [&](int x, const std::string& big, const std::string& label, bool accent) {
+        c.text(x + pad / 2, r.y + pad + lpx / 2 + S(2), label, lpx, kDim);
+        int px = maxbig; while (px > S(14) && c.textWidth(big, px) > tw - pad) px -= S(2);
+        c.text(x + pad / 2, r.y + pad + tileh * 62 / 100, big, px, accent ? kAccent : kText);
+    };
+    tile(r.x + pad, m.energy_big_a, m.energy_big_a_label, false);
+    tile(r.x + pad + tw + gap, m.energy_big_b, m.energy_big_b_label, m.energy_big_b == "regen");
+    if (r.h < S(260)) return;
+    const int rh = S(36), rpx = S(20), vpx = S(22);
+    int y = r.y + pad + tileh + pad;
+    for (const auto& row : m.energy_rows) {
+        if (y + rh > r.y + r.h - pad) break;                                // what does not fit is simply not shown
+        c.fillRoundRect({r.x + pad, y + rh - std::max(1, S(1)), iw, std::max(1, S(1))}, 0, kPillBorder);
+        c.text(r.x + pad, y + rh / 2, row.label, rpx, kDim);
+        const Color vc = row.level < 0 ? kOff : row.level == 1 ? kAccent : row.level == 2 ? kWarm : kText;
+        const std::string v = row.level < 0 ? std::string("\xe2\x80\x94") : row.value;
+        const int uw = row.unit.empty() || row.level < 0 ? 0 : c.textWidth(row.unit, S(16)) + S(5), vw = c.textWidth(v, vpx);
+        c.text(r.x + r.w - pad - uw - vw, y + rh / 2, v, vpx, vc);
+        if (uw) c.text(r.x + r.w - pad - uw + S(5), y + rh / 2 + S(2), row.unit, S(16), kDim);
+        y += rh + S(2);
+    }
+}
+
 void Menu::drawPlaceholders(Canvas& c, const Model& m) {
     const Layout& L = m.layout;
     auto paint = [&](const Pane& p, Art a, int radius) {
@@ -422,7 +458,8 @@ void Menu::drawPlaceholders(Canvas& c, const Model& m) {
         if (splash || !m.corner_restore || !L.phone.live)     // over a live phone the video path puts the phone's own pixels back (corner_restore); otherwise paint the cover
             c.fillRoundCorners(L.camera.rect, L.camera_radius, art ? art->data() : nullptr, splash ? L.phone.rect : Rect{0, 0, 0, 0}, Color{12, 14, 18, 255});
     }
-    if (!(L.camera.live && L.camera.visible)) paint(L.camera, Art::Camera, m.mode == Mode::Pip ? L.camera_radius : 0);   // same corner radius as the live picture
+    if (m.pane_energy && L.camera.visible && !L.camera.rect.empty()) drawEnergyPane(c, m, L.camera.rect, m.mode == Mode::Pip ? L.camera_radius : 0);
+    else if (!(L.camera.live && L.camera.visible)) paint(L.camera, Art::Camera, m.mode == Mode::Pip ? L.camera_radius : 0);   // same corner radius as the live picture
 }
 
 void Menu::render(Canvas& c, const Model& m, int64_t now) {
@@ -439,12 +476,12 @@ void Menu::render(Canvas& c, const Model& m, int64_t now) {
         const Layout& L = m.layout;
         for (const auto& w : widgets_) if (w.style == ST_PANE || w.style == ST_CHIP || w.id == ID_SPLIT_HANDLE) drawWidget(c, w);
         if (m.split_dragging && m.split_edge != 0 && !L.split_handle.empty()) {        // edge zone hint while dragging: inside the divider band, left of the grip
-            const std::string hint = m.split_edge < 0 ? "Full camera" : "Full Android Auto";                    // short: it must fit left of the grip inside the band
+            const std::string hint = m.split_edge < 0 ? (m.pane_energy ? "Full Energy" : "Full camera") : "Full Android Auto";                    // short: it must fit left of the grip inside the band
             const Rect b = L.split_handle; const int hh = std::min(b.h, S(40)), hw = c.textWidth(hint, S(20)) + S(32), hx = std::max(b.x + S(16), (W_ - S(96)) / 2 - S(28) - hw), hy = b.y + (b.h - hh) / 2;
             c.fillRoundRect({hx, hy, hw, hh}, hh / 2, kAccent); c.textCentered({hx, hy, hw, hh}, hint, S(20), Color{255, 255, 255, 255});
         }
         if (now - m.mode_changed_ms < kAwakeMs && !m.split_dragging && (screen_ == Screen::Home || awakeAt(now))) {   // mode toast: what you just switched to
-            const char* name = m.mode == Mode::FullAA ? "Android Auto" : m.mode == Mode::FullCam ? "Camera" : m.mode == Mode::Pip ? "Camera window" : m.mode == Mode::Energy ? "Energy" : "Split";
+            const char* name = m.mode == Mode::FullAA ? "Android Auto" : m.mode == Mode::FullCam ? "Camera" : m.mode == Mode::Pip ? (m.pane_energy ? "Energy window" : "Camera window") : m.mode == Mode::Energy ? "Energy" : "Split";
             const int ic = m.mode == Mode::FullAA ? ICON_AA : m.mode == Mode::FullCam ? ICON_CAM : m.mode == Mode::Pip ? ICON_PIP : m.mode == Mode::Energy ? ICON_ENERGY : ICON_SPLIT;
             const int th = S(44), tw = c.textWidth(name, S(22)) + S(70), tx = (W_ - handleRect(W_, H_).w - tw) / 2;
             Rect tr{tx, H_ - S(90) - th, tw, th};                                                  // bottom centre; over a camera window -> top centre; still covered -> no toast
@@ -552,7 +589,7 @@ Intent Menu::activate(int id, const Model& m) {
     case ID_MODE_SPLIT: setMode(Mode::Split); break;
     case ID_MODE_PIP: setMode(Mode::Pip); break;
     case ID_MODE_ENERGY: setMode(Mode::Energy); break;
-    case ID_PANE_MAX: it.kind = Intent::SetMode; it.i = (int)Mode::FullCam; break;
+    case ID_PANE_MAX: it.kind = Intent::SetMode; it.i = (int)(m.pane_energy ? Mode::Energy : Mode::FullCam); break;   // the Energy pane opens the full Energy page
     case ID_PANE_CLOSE: it.kind = Intent::SetMode; it.i = (int)Mode::FullAA; break;       // close the camera window -> Android Auto
     case ID_PANE_PIP: it.kind = Intent::SetMode; it.i = (int)Mode::Pip; break;
     case ID_START_AA: setStart(Mode::FullAA); break;
